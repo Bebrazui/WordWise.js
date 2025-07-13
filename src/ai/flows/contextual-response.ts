@@ -242,28 +242,33 @@ const responseTemplates: {[key: string]: (data: any) => string} = {
 
 function determineIntent(userInput: string): string {
     const cleanedInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
+    const words = cleanedInput.split(/\s+/);
+
     let bestIntent = 'default';
     let maxScore = 0;
 
-    // Check for exact match for short ambiguous queries first
-    if (intents['ambiguous_short'].includes(cleanedInput)) {
-        return 'ambiguous_short';
-    }
-
     for (const intent in intents) {
-        let currentScore = 0;
+        let score = 0;
         for (const keyword of intents[intent]) {
+            // Check for exact phrase match
             if (cleanedInput.includes(keyword)) {
-                currentScore += keyword.length;
+                 // Longer matches get higher scores
+                score += keyword.length;
             }
         }
-        if (currentScore > maxScore) {
-            maxScore = currentScore;
+        if (score > maxScore) {
+            maxScore = score;
             bestIntent = intent;
         }
     }
     
-    if (maxScore < 4 && cleanedInput.split(' ').length < 3) {
+    // Fallback for very short or ambiguous queries
+    if (intents['ambiguous_short'].includes(cleanedInput)) {
+        return 'ambiguous_short';
+    }
+
+    // If the best match has a low score, it's likely not a real intent.
+    if (maxScore < 3 && words.length > 2) {
         return 'default';
     }
 
@@ -460,7 +465,7 @@ function generateResponseFromMarkov(userInput: string): string {
     return finalResponse.replace(/\s+([.?!...])/, '$1');
 }
 
-function generateResponse(userInput: string): string {
+async function generateResponse(userInput: string): Promise<string> {
   const correctedInput = userInput
     .toLowerCase()
     .replace(/[.,!?]/g, '')
@@ -507,7 +512,7 @@ export async function contextualResponse(
   input: ContextualResponseInput
 ): Promise<ContextualResponseOutput> {
   
-  const aiResponse = generateResponse(input.userInput);
+  const aiResponse = await generateResponse(input.userInput);
 
   return { aiResponse };
 }
