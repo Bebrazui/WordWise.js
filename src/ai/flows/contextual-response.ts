@@ -8,6 +8,7 @@
  */
 
 import {z} from 'zod';
+import { findBestMatch } from '@/lib/semantic-search';
 
 const ContextualResponseInputSchema = z.object({
   userInput: z
@@ -221,6 +222,8 @@ const knowledgeBase: {[key: string]: any[]} = {
   'default': [{ type: 'default', text: 'Интересная мысль.' }, { type: 'default', text: 'Я не совсем понял, можешь перефразировать?' }, { type: 'default', text: 'Хм, надо подумать.' }, { type: 'default', text: 'Давай сменим тему?' }]
 };
 
+const allIntentKeywords = Object.values(intents).flat();
+
 const responseTemplates: {[key: string]: (data: any) => string} = {
     'identity': (data) => `Я — ${data.name}, твой цифровой собеседник. В основе моей работы лежит технология — ${data.technology}. Моя цель — ${data.goal}, а мой мир — это ${data.world}.`,
     'greeting': (data) => data.text,
@@ -241,38 +244,47 @@ const responseTemplates: {[key: string]: (data: any) => string} = {
 };
 
 function determineIntent(userInput: string): string {
-    const cleanedInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
-    const words = cleanedInput.split(/\s+/);
+  // First, check for the best semantic match using TF-IDF
+  const bestMatchResult = findBestMatch(userInput, allIntentKeywords);
 
-    let bestIntent = 'default';
-    let maxScore = 0;
+  if (bestMatchResult && bestMatchResult.bestMatch.rating > 0.3) { // Use a threshold
+      const bestMatchKeyword = bestMatchResult.bestMatch.target;
+      for (const intent in intents) {
+          if (intents[intent].includes(bestMatchKeyword)) {
+              return intent;
+          }
+      }
+  }
 
-    for (const intent in intents) {
-        let score = 0;
-        for (const keyword of intents[intent]) {
-            // Check for exact phrase match
-            if (cleanedInput.includes(keyword)) {
-                 // Longer matches get higher scores
-                score += keyword.length;
-            }
-        }
-        if (score > maxScore) {
-            maxScore = score;
-            bestIntent = intent;
-        }
-    }
-    
-    // Fallback for very short or ambiguous queries
-    if (intents['ambiguous_short'].includes(cleanedInput)) {
-        return 'ambiguous_short';
-    }
+  // Fallback to keyword-based intent detection for simple cases
+  const cleanedInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
+  const words = cleanedInput.split(/\s+/);
 
-    // If the best match has a low score, it's likely not a real intent.
-    if (maxScore < 3 && words.length > 2) {
-        return 'default';
-    }
+  let bestIntent = 'default';
+  let maxScore = 0;
 
-    return bestIntent;
+  for (const intent in intents) {
+      let score = 0;
+      for (const keyword of intents[intent]) {
+          if (cleanedInput.includes(keyword)) {
+              score += keyword.length;
+          }
+      }
+      if (score > maxScore) {
+          maxScore = score;
+          bestIntent = intent;
+      }
+  }
+  
+  if (intents['ambiguous_short'].includes(cleanedInput)) {
+      return 'ambiguous_short';
+  }
+
+  if (maxScore < 3 && words.length > 2) {
+      return 'default';
+  }
+
+  return bestIntent;
 }
 
 const markovChains: {[key: string]: string[]} = {
