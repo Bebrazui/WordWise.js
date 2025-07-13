@@ -230,7 +230,7 @@ const markovChains: {[key: string]: string[]} = {
   'я не': ['знаю', 'понял', 'могу', 'хочу'],
   'я думаю': ['что', 'это', 'о'],
   'я хочу': ['знать', 'спросить', 'сказать', 'понять'],
-  'ты можешь': ['помочь', 'рассказать', 'сделать'],
+  'ты можешь': ['помочь', 'рассказывать', 'сделать'],
   'ты знаешь': ['что', 'как', 'ответ'],
   'это очень': ['интересно', 'хорошо', 'важно', 'сложно'],
   'это хороший': ['вопрос', 'ответ', 'вариант'],
@@ -282,7 +282,7 @@ const markovChains: {[key: string]: string[]} = {
   'в': ['мире', 'жизни', 'работе', 'программе', 'интернете', 'этом', 'чем'],
   'на': ['работе', 'столе', 'экране', 'самом', 'деле'],
   'о': ['жизни', 'работе', 'программировании', 'тебе', 'смысле', 'себе'],
-  'с': ['тобой', 'другом', 'компьютером', 'радостью', 'точки', 'зрения'],
+  'с': ['тобой', 'другом', 'компьютером', 'радостью', 'с', 'точки', 'зрения'],
   'и': ['я', 'ты', 'он', 'она', 'это', 'поэтому', 'еще'],
   'а': ['я', 'ты', 'что', 'если', 'может', 'быть', 'у'],
   'но': ['это', 'я', 'ты', 'всегда', 'иногда'],
@@ -290,7 +290,7 @@ const markovChains: {[key: string]: string[]} = {
   'если': ['ты', 'я', 'это', 'то', 'подумать'],
 };
 
-function findBestStartingWords(userInput: string): string[] {
+function findBestStartingWords(userInput: string): string[] | null {
     const words = userInput.toLowerCase().replace(/[.,?]/g, '').split(/\s+/).filter(Boolean);
     
     // Try to find a trigram match first
@@ -304,11 +304,12 @@ function findBestStartingWords(userInput: string): string[] {
     // Fallback to bigram (single word) match
     const knownWords = words.filter(word => markovChains[word]);
     if (knownWords.length > 0) {
-        const randomWord = knownWords[Math.floor(Math.random() * knownWords.length)];
-        return ['__start__', randomWord];
+        // Return the *last* known word to make the response more relevant to the end of the user's sentence
+        const lastKnownWord = knownWords[knownWords.length - 1];
+        return ['__start__', lastKnownWord];
     }
 
-    return ['__start__', '__start__'];
+    return null;
 }
 
 
@@ -316,15 +317,15 @@ function generateResponse(userInput: string): string {
   // Correct typos in the user input first
   const correctedInput = userInput
     .toLowerCase()
-    .replace(/[.,?]/g, '')
+    .replace(/[.,!?]/g, '')
     .split(/\s+/)
     .map(word => correctSpelling(word, vocabulary))
     .join(' ');
 
+  // Prioritize checking for full phrase matches in canned responses
   for (const phrase in cannedResponses) {
     if (phrase === 'default') continue;
     
-    // Check for whole phrase match in the corrected input
     const regex = new RegExp(`\\b${phrase}\\b`);
     if (regex.test(correctedInput)) {
       const possibleResponses = cannedResponses[phrase];
@@ -332,7 +333,15 @@ function generateResponse(userInput: string): string {
     }
   }
 
-  let [word1, word2] = findBestStartingWords(correctedInput);
+  const startingPair = findBestStartingWords(correctedInput);
+  
+  if (!startingPair) {
+      // If no relevant starting point is found, use a generic fallback
+      const defaultResponses = cannedResponses['default'];
+      return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
+  }
+
+  let [word1, word2] = startingPair;
   
   if (word1 === '__start__' && word2 === '__start__') {
       const startWords = markovChains['__start__'];
@@ -383,7 +392,7 @@ function generateResponse(userInput: string): string {
   }
 
   // Fallback to a default canned response if the generated response is too short or nonsensical
-  if (response.length < 3) {
+  if (response.length < 2) {
       const defaultResponses = cannedResponses['default'];
       return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
   }
@@ -392,7 +401,7 @@ function generateResponse(userInput: string): string {
   finalResponse = finalResponse.charAt(0).toUpperCase() + finalResponse.slice(1);
   
   const lastWord = response[response.length - 1];
-  if (lastWord && !markovChains['__end__'].includes(lastWord)) {
+  if (lastWord && !markovChains['__end__'].includes(lastWord) && !/[.?!]/.test(lastWord)) {
       const endChars = markovChains['__end__'] || ['.'];
       finalResponse += endChars[Math.floor(Math.random() * endChars.length)];
   }
