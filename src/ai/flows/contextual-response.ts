@@ -106,7 +106,7 @@ const vocabulary: string[] = [
     'делаю', 'делаешь', 'делает', 'делаем', 'делаете', 'делают',
     'отвечаю', 'отвечаешь', 'отвечает', 'отвечаем', 'отвечаете', 'отвечают',
     // Objects and concepts
-    'слово', 'слова', 'фраза', 'предложение', 'текст', 'код', 'программа', 'идея', 'мысль', 'вопрос', 'ответ', 'мир', 'жизнь', 'время', 'работа', 'компьютер', 'информация',
+    'слово', 'слова', 'фраз', 'фраза', 'предложение', 'текст', 'код', 'программа', 'идея', 'мысль', 'вопрос', 'ответ', 'мир', 'жизнь', 'время', 'работа', 'компьютер', 'информация',
     // Adjectives
     'интересный', 'скучный', 'новый', 'старый', 'хороший', 'плохой', 'большой', 'маленький', 'умный', 'простой', 'сложный', 'красивый', 'важный', 'логичный',
     // Adverbs
@@ -122,7 +122,7 @@ const vocabulary: string[] = [
     // Hobbies & Interests
     'музыка', 'кино', 'книга', 'искусство', 'наука', 'путешествие', 'спорт', 'игра',
     // Nature
-    'погода', 'солнце', 'дождь', 'небо', 'звезда', 'планета', 'природа', 'мир',
+    'погода', 'солнце', 'дождь', 'небо', 'звезда', 'планета', 'природа',
     // Fillers
     'ну', 'эм', 'вот', 'кстати', 'знаешь', 'хм', 'понимаешь',
     // More verbs
@@ -213,32 +213,49 @@ const cannedResponses: {[key: string]: string[]} = {
 
 
 const markovChains: {[key: string]: string[]} = {
-  // Starters
+  // N-grams (trigrams)
+  // key is "word1 word2", value is ["word3", "word4"]
   '__start__': ['я', 'ты', 'привет', 'здравствуй', 'как', 'что', 'это', 'мне', 'у', 'сегодня', 'ну', 'вот', 'кстати', 'почему'],
   '__end__': ['.', '?', '!', '...'],
   
-  // Greetings
+  'привет как': ['дела', 'ты', 'настроение'],
+  'здравствуй как': ['дела', 'ты'],
+  'как твои': ['дела', 'успехи'],
+  'у меня': ['все', 'тоже'],
+  'все хорошо': ['а', 'и', 'но'],
+  'а у': ['тебя', 'вас'],
+  'что нового': ['у', 'в'],
+  'что ты': ['думаешь', 'делаешь', 'знаешь', 'хочешь', 'можешь'],
+  'расскажи о': ['себе', 'том', 'мире'],
+  'я не': ['знаю', 'понял', 'могу', 'хочу'],
+  'я думаю': ['что', 'это', 'о'],
+  'я хочу': ['знать', 'спросить', 'сказать', 'понять'],
+  'ты можешь': ['помочь', 'рассказать', 'сделать'],
+  'ты знаешь': ['что', 'как', 'ответ'],
+  'это очень': ['интересно', 'хорошо', 'важно', 'сложно'],
+  'это хороший': ['вопрос', 'ответ', 'вариант'],
+  'это плохой': ['знак', 'вариант'],
+  'потому что': ['это', 'я', 'ты'],
+  'если ты': ['хочешь', 'знаешь', 'можешь'],
+  'в чем': ['смысл', 'дело', 'проблема'],
+  'смысл жизни': ['в', 'это', 'для'],
+  'мой мир': ['это', 'состоит', 'наполнен'],
+  'искусственный интеллект': ['это', 'учится', 'развивается'],
+  'машинное обучение': ['это', 'используется', 'помогает'],
+  'цепи маркова': ['это', 'позволяют', 'работают'],
+  'база данных': ['хранит', 'содержит', 'это'],
+  
+  // Bigrams (fallback)
   'привет': ['я', 'ты', 'как', 'что'],
   'здравствуй': ['как', 'что', 'рад'],
-
-  // Pronouns and their likely verbs/nouns
-  'я': ['думаю', 'говорю', 'знаю', 'хочу', 'могу', 'работаю', 'учусь', 'программист', 'бот', 'неплохо', 'стараюсь', 'в порядке'],
-  'ты': ['думаешь', 'говоришь', 'знаешь', 'хочешь', 'можешь', 'работаешь', 'учишься', 'как', 'бот', 'программист'],
+  'я': ['думаю', 'говорю', 'знаю', 'хочу', 'могу', 'работаю', 'учусь', 'программист', 'бот', 'неплохо', 'стараюсь', 'в порядке', 'не'],
+  'ты': ['думаешь', 'говоришь', 'знаешь', 'хочешь', 'можешь', 'работаешь', 'учишься', 'как', 'бот', 'программист', 'можешь'],
   'он': ['думает', 'говорит', 'знает', 'хочет', 'может', 'работает', 'программист'],
-  'она': ['думает', 'говорит', 'знает', 'хочет', 'может', 'работает', 'программист'],
   'мы': ['думаем', 'говорим', 'знаем', 'хотим', 'можем', 'работаем', 'учимся'],
-  'вы': ['думаете', 'говорите', 'знаете', 'хотите', 'можете', 'работаете', 'учитесь'],
-  'они': ['думают', 'говорят', 'знают', 'хотят', 'могут', 'работают', 'учатся'],
-  
-  // Common Questions
-  'как': ['дела', 'ты', 'настроение', 'жизнь', 'думаешь', 'это', 'работает'],
-  'что': ['ты', 'это', 'нового', 'делаешь', 'думаешь', 'знаешь'],
+  'как': ['дела', 'ты', 'настроение', 'жизнь', 'думаешь', 'это', 'работает', 'твои'],
+  'что': ['ты', 'это', 'нового', 'делаешь', 'думаешь', 'знаешь', 'такое'],
   'почему': ['ты', 'это', 'так', 'происходит'],
   'кто': ['ты', 'это', 'он'],
-  'где': ['ты', 'это', 'находится'],
-  'когда': ['это', 'мы', 'начнем'],
-  
-  // Nouns and their likely contexts
   'дела': ['хорошо', 'отлично', 'неплохо', 'нормально', 'идут', 'в порядке'],
   'вопрос': ['интересный', 'сложный', 'простой', 'в том'],
   'ответ': ['простой', 'сложный', 'есть', 'на'],
@@ -251,52 +268,49 @@ const markovChains: {[key: string]: string[]} = {
   'мир': ['большой', 'интересный', 'сложный', 'вокруг', 'это'],
   'жизнь': ['интересная', 'сложная', 'простая', 'это', 'в'],
   'время': ['идет', 'быстро', 'медленно', 'это'],
-  
-  // Verbs and their likely objects/contexts
   'думаю': ['что', 'о', 'про', 'это', 'хорошая', 'идея'],
-  'думаешь': ['что', 'о', 'про', 'это', 'правильно'],
-  'думает': ['что', 'о', 'про'],
   'говорю': ['что', 'о', 'про', 'с', 'тебе'],
-  'говоришь': ['что', 'о', 'про', 'мне'],
   'знаю': ['что', 'как', 'это', 'ответ', 'не'],
-  'знаешь': ['что', 'как', 'ответ', 'ли', 'ты'],
   'могу': ['помочь', 'сделать', 'написать', 'ответить', 'сказать'],
-  'можешь': ['помочь', 'сделать', 'написать', 'ответить', 'сказать', 'ли'],
   'хочу': ['знать', 'понять', 'спросить', 'сказать'],
-  'хочешь': ['узнать', 'спросить', 'сказать', 'ли'],
   'работаю': ['над', 'с', 'в', 'как'],
-  'работает': ['хорошо', 'плохо', 'быстро', 'медленно', 'как'],
   'учусь': ['программировать', 'говорить', 'новому', 'на'],
-  'учится': ['быстро', 'хорошо', 'программированию'],
-  'делаю': ['это', 'работу', 'что', 'могу'],
-  'делаешь': ['это', 'что'],
   'отвечаю': ['на', 'твой', 'вопрос'],
-  'отвечает': ['на', 'вопросы'],
-
-  // General words
-  'это': ['интересно', 'сложно', 'просто', 'хорошо', 'плохо', 'мой', 'твой', 'наш', 'ответ', 'вопрос', 'правда', 'не'],
+  'это': ['интересно', 'сложно', 'просто', 'хорошо', 'плохо', 'мой', 'твой', 'наш', 'ответ', 'вопрос', 'правда', 'не', 'очень'],
   'все': ['хорошо', 'плохо', 'сложно', 'просто', 'понятно', 'зависит'],
   'очень': ['интересно', 'хорошо', 'плохо', 'сложно', 'просто', 'важно'],
-  'в': ['мире', 'жизни', 'работе', 'программе', 'интернете', 'этом'],
+  'в': ['мире', 'жизни', 'работе', 'программе', 'интернете', 'этом', 'чем'],
   'на': ['работе', 'столе', 'экране', 'самом', 'деле'],
-  'о': ['жизни', 'работе', 'программировании', 'тебе', 'смысле'],
+  'о': ['жизни', 'работе', 'программировании', 'тебе', 'смысле', 'себе'],
   'с': ['тобой', 'другом', 'компьютером', 'радостью', 'точки', 'зрения'],
   'и': ['я', 'ты', 'он', 'она', 'это', 'поэтому', 'еще'],
-  'а': ['я', 'ты', 'что', 'если', 'может', 'быть'],
+  'а': ['я', 'ты', 'что', 'если', 'может', 'быть', 'у'],
   'но': ['это', 'я', 'ты', 'всегда', 'иногда'],
-  'потому что': ['это', 'я', 'ты', 'так', 'надо', 'интересно'],
+  'потому': ['что'],
   'если': ['ты', 'я', 'это', 'то', 'подумать'],
 };
 
-
-function findBestStartingWord(userInput: string): string {
-    const words = userInput.toLowerCase().replace(/[.,?]/g, '').split(/\s+/);
+function findBestStartingWords(userInput: string): string[] {
+    const words = userInput.toLowerCase().replace(/[.,?]/g, '').split(/\s+/).filter(Boolean);
+    
+    // Try to find a trigram match first
+    for (let i = 0; i < words.length - 1; i++) {
+        const bigram = `${words[i]} ${words[i+1]}`;
+        if (markovChains[bigram]) {
+            return [words[i], words[i+1]];
+        }
+    }
+    
+    // Fallback to bigram (single word) match
     const knownWords = words.filter(word => markovChains[word]);
     if (knownWords.length > 0) {
-        return knownWords[Math.floor(Math.random() * knownWords.length)];
+        const randomWord = knownWords[Math.floor(Math.random() * knownWords.length)];
+        return ['__start__', randomWord];
     }
-    return '__start__';
+
+    return ['__start__', '__start__'];
 }
+
 
 function generateResponse(userInput: string): string {
   // Correct typos in the user input first
@@ -318,35 +332,54 @@ function generateResponse(userInput: string): string {
     }
   }
 
-  let currentWord = findBestStartingWord(correctedInput);
-  if (currentWord === '__start__') {
+  let [word1, word2] = findBestStartingWords(correctedInput);
+  
+  if (word1 === '__start__' && word2 === '__start__') {
       const startWords = markovChains['__start__'];
-      currentWord = startWords[Math.floor(Math.random() * startWords.length)];
+      word2 = startWords[Math.floor(Math.random() * startWords.length)];
   }
 
-  let response = [currentWord];
+  let response = word1 === '__start__' ? [word2] : [word1, word2];
   const isShortAnswer = correctedInput.split(/\s+/).length <= 2;
-  const sentenceLength = isShortAnswer ? (Math.floor(Math.random() * 4) + 2) : (Math.floor(Math.random() * 7) + 5); // 2-5 words for short, 5-11 for long
+  const sentenceLength = isShortAnswer ? (Math.floor(Math.random() * 4) + 2) : (Math.floor(Math.random() * 8) + 6); // 2-5 words for short, 6-13 for long
 
   for (let i = 0; i < sentenceLength; i++) {
-    const possibleNextWords = markovChains[currentWord] || vocabulary;
-    if (possibleNextWords.length === 0) break;
+    const lastTwoWords = response.slice(-2).join(' ');
+    const lastWord = response[response.length - 1];
+    
+    // Prioritize Trigrams (N-grams of order 3)
+    let possibleNextWords = markovChains[lastTwoWords];
+    
+    // Fallback to Bigrams (N-grams of order 2)
+    if (!possibleNextWords) {
+        possibleNextWords = markovChains[lastWord];
+    }
+
+    // If no chain found, stop to avoid nonsensical jumps
+    if (!possibleNextWords || possibleNextWords.length === 0) {
+        break; 
+    }
     
     let nextWord = possibleNextWords[Math.floor(Math.random() * possibleNextWords.length)];
     
     // Avoid immediate repetition of words
-    if (response.length > 0 && response[response.length - 1] === nextWord) {
+    if (lastWord === nextWord) {
         // try once more
         nextWord = possibleNextWords[Math.floor(Math.random() * possibleNextWords.length)];
+        if (lastWord === nextWord) break; // If it's still the same, just end the sentence.
     }
     
     response.push(nextWord);
-    currentWord = nextWord;
     
-    // Break if we hit a word with no chain to follow, to avoid random jumps
-    if (!markovChains[currentWord]) {
+    // Break if we hit a word with no chain to follow from now on.
+    if (!markovChains[response.slice(-2).join(' ')] && !markovChains[nextWord]) {
         break;
     }
+  }
+  
+  // Clean up response starting with __start__
+  if(response[0] === '__start__') {
+      response = response.slice(1);
   }
 
   // Fallback to a default canned response if the generated response is too short or nonsensical
