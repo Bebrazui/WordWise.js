@@ -7,6 +7,7 @@
  * - ContextualResponseOutput - The return type for the contextualResponse function.
  */
 
+import {findBestMatch} from '@/lib/semantic-search';
 import {z} from 'zod';
 
 const ContextualResponseInputSchema = z.object({
@@ -30,35 +31,34 @@ export type ContextualResponseOutput = z.infer<
 // A very simple knowledge base.
 // The key is the keyword to look for, and the value is the response.
 const knowledgeBase: {[key: string]: string} = {
-    'привет': 'Привет! Чем я могу помочь?',
-    'здравствуй': 'Здравствуй!',
-    'пока': 'До свидания!',
-    'до свидания': 'Пока! Удачи!',
-    'как дела': 'У меня все хорошо, я же программа. А у тебя?',
-    'кто ты': 'Я — WordWise, очень простой бот.',
-    'спасибо': 'Пожалуйста!',
-    'помощь': 'Я еще не умею помогать, но я учусь.',
-    'марс': 'Марс - это красная планета.',
-    'погода': 'Я не знаю какая погода, я же в компьютере.',
-    'шутку': 'Колобок повесился.',
+  привет: 'Привет! Чем я могу помочь?',
+  здравствуй: 'Здравствуй!',
+  пока: 'До свидания!',
+  'до свидания': 'Пока! Удачи!',
+  'как дела': 'У меня все хорошо, я же программа. А у тебя?',
+  'кто ты': 'Я — WordWise, очень простой бот.',
+  спасибо: 'Пожалуйста!',
+  помощь: 'Я еще не умею помогать, но я учусь.',
+  марс: 'Марс - это красная планета.',
+  погода: 'Я не знаю какая погода, я же в компьютере.',
+  шутку: 'Колобок повесился.',
 };
 
 // A default response if no keyword is found.
 const defaultResponse = 'Интересная мысль. Я не совсем понимаю.';
+const SIMILARITY_THRESHOLD = 0.5;
 
 /**
- * This is a very primitive function to generate a response.
- * It finds the first keyword from the knowledge base that exists in the user input.
+ * This function uses semantic search to generate a response.
  * @param userInput The user's message.
  * @returns A response string.
  */
-function generateResponse(userInput: string): string {
-  const lowerCaseInput = userInput.toLowerCase();
+async function generateResponse(userInput: string): Promise<string> {
+  const documents = Object.keys(knowledgeBase);
+  const {bestMatch} = await findBestMatch(userInput, documents);
 
-  for (const keyword in knowledgeBase) {
-    if (lowerCaseInput.includes(keyword)) {
-      return knowledgeBase[keyword];
-    }
+  if (bestMatch && bestMatch.rating > SIMILARITY_THRESHOLD) {
+    return knowledgeBase[bestMatch.target];
   }
 
   return defaultResponse;
@@ -69,8 +69,7 @@ function generateResponse(userInput: string): string {
 export async function contextualResponse(
   input: ContextualResponseInput
 ): Promise<ContextualResponseOutput> {
-  
-  const aiResponse = generateResponse(input.userInput);
+  const aiResponse = await generateResponse(input.userInput);
 
-  return { aiResponse };
+  return {aiResponse};
 }

@@ -1,9 +1,8 @@
 import {genkit, Plugin} from 'genkit';
-import {googleAI} from '@genkit-ai/google-ai';
+import {googleAI} from '@genkit-ai/googleai';
 import {firebase} from '@genkit-ai/firebase';
-import {genkitEval} from 'genkit-eval';
 
-const plugins: Plugin<any>[] = [googleAI(), firebase(), genkitEval()];
+const plugins: Plugin<any>[] = [googleAI(), firebase()];
 
 if (process.env.GENKIT_ENV === 'dev') {
   const {dotprompt} = await import('genkitx-dotprompt');
