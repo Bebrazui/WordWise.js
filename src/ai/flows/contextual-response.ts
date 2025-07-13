@@ -22,56 +22,119 @@ const ContextualResponseOutputSchema = z.object({
 });
 export type ContextualResponseOutput = z.infer<typeof ContextualResponseOutputSchema>;
 
+// --- Модель на основе цепей Маркова ---
 
-// --- Простая вероятностная модель ---
+const transitions: Record<string, string[]> = {
+  __start: ['Привет', 'Здравствуй', 'Как', 'Что', 'Расскажи'],
+  привет: ['! Как', '!', 'здравствуй', '.'],
+  здравствуй: ['!', 'как', 'почему', '.'],
+  как: ['дела', 'погода', 'ты', 'настроение', '?'],
+  дела: ['?', 'у', 'меня', 'хорошо', 'плохо', '.'],
+  что: ['нового', 'делаешь', 'интересного', 'ты', '?'],
+  нового: ['?', 'у', 'меня', 'ничего', '.'],
+  хорошо: ['.', 'а', 'у', 'тебя', '?'],
+  плохо: ['.', 'почему', '?'],
+  почему: ['?', 'ты', 'так', 'думаешь', '?'],
+  сегодня: ['хорошая', 'плохая', 'погода', '.'],
+  завтра: ['будет', 'новый', 'день', '.'],
+  погода: ['хорошая', 'плохая', 'солнечная', 'дождливая', '.'],
+  я: ['думаю', 'знаю', 'хочу', 'работаю', 'отдыхаю'],
+  ты: ['думаешь', 'знаешь', 'хочешь', 'работаешь', '?'],
+  думаю: ['что', 'все', 'будет', 'хорошо', '.'],
+  знаю: ['что', 'это', 'интересно', '.'],
+  спасибо: ['.', 'пожалуйста', '.'],
+  пожалуйста: ['.', 'не', 'за', 'что', '.'],
+  расскажи: ['мне', 'о', 'себе', 'что-нибудь', '.'],
+  мне: ['интересно', 'скучно', '.'],
+  о: ['тебе', 'работе', 'погоде', '.'],
+  тебе: ['?', 'интересно', 'скучно', '.'],
+  пока: ['.', 'до', 'свидания', '.'],
+};
 
-const vocabulary: string[] = [
-  'привет', 'здравствуй', 'как', 'дела', 'что', 'нового', 'хорошо', 'плохо', 'почему',
-  'сегодня', 'завтра', 'погода', 'солнечно', 'дождливо', 'я', 'ты', 'думаю', 'знаю',
-  'может', 'быть', 'всегда', 'иногда', 'никогда', 'спасибо', 'пожалуйста', 'извини',
-  'да', 'нет', 'конечно', 'возможно', 'расскажи', 'мне', 'о', 'тебе', 'интересно',
-  'скучно', 'работа', 'отдых', 'планы', 'вечер', 'утро', 'день', 'ночь', 'пока',
-];
+const keywords: Record<string, string[]> = {
+  привет: ['привет', 'здравствуй'],
+  пока: ['пока', 'до свидания'],
+  погода: ['погода', 'солнце', 'дождь'],
+  дела: ['дела', 'как ты'],
+  спасибо: ['спасибо'],
+  'расскажи о себе': ['кто ты', 'о себе', 'расскажи'],
+};
+
+function getRandomElement<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 function generateResponse(userInput: string): string {
-  const words = userInput.toLowerCase().split(/\s+/);
-  const firstWord = words[0];
+  const lowerCaseInput = userInput.toLowerCase();
   
-  let responseWords: string[] = [];
+  let startWord: string | null = null;
 
-  // 1. Обработка слова "привет" с 80% вероятностью
-  if (firstWord === 'привет') {
-    if (Math.random() < 0.8) {
-      responseWords.push('Привет!');
-    } else {
-      // В остальных 20% случаев выбираем другой ответ
-      const alternativeGreetings = ['Здравствуй!', 'Добрый день!'];
-      responseWords.push(alternativeGreetings[Math.floor(Math.random() * alternativeGreetings.length)]);
-    }
-  } else {
-    // Для других слов начинаем ответ со случайного слова
-     responseWords.push(vocabulary[Math.floor(Math.random() * vocabulary.length)]);
-     responseWords[0] = responseWords[0].charAt(0).toUpperCase() + responseWords[0].slice(1);
-  }
-
-  // 2. Генерация остальной части предложения
-  const responseLength = Math.floor(Math.random() * 5) + 3; // Длина ответа от 3 до 7 слов
-
-  while (responseWords.length < responseLength) {
-    const nextWord = vocabulary[Math.floor(Math.random() * vocabulary.length)];
-    // Избегаем повторения слов подряд
-    if (responseWords[responseWords.length - 1] !== nextWord) {
-      responseWords.push(nextWord);
+  // 1. Ищем ключевые слова в сообщении пользователя, чтобы выбрать тему ответа
+  for (const start of Object.keys(keywords)) {
+    if (keywords[start].some(kw => lowerCaseInput.includes(kw))) {
+       const possibleStarts: Record<string, string[]> = {
+          'привет': ['Привет!', 'Здравствуй!'],
+          'пока': ['Пока!', 'До встречи!'],
+          'погода': ['Сегодня', 'Думаю,', 'Завтра'],
+          'дела': ['У меня все хорошо,', 'Дела идут', 'Как дела?'],
+          'спасибо': ['Пожалуйста!', 'Не за что.'],
+          'расскажи о себе': ['Я — простой бот.', 'Что именно тебя интересует?'],
+       };
+       startWord = getRandomElement(possibleStarts[start] || transitions.__start);
+       break;
     }
   }
 
-  return responseWords.join(' ') + '.';
+  // 2. Если ключевых слов не найдено, начинаем со случайного слова
+  if (!startWord) {
+    startWord = getRandomElement(transitions.__start);
+  }
+
+  // Особый случай для "привет" с 80% вероятностью
+  if (lowerCaseInput.startsWith('привет') && Math.random() < 0.8) {
+      startWord = 'Привет!';
+  }
+
+
+  let response = [startWord];
+  let currentWord = startWord.toLowerCase().replace(/[.!?]/g, '');
+  const responseLength = Math.floor(Math.random() * 6) + 4; // Длина ответа от 4 до 9 слов
+
+  // 3. Генерируем продолжение ответа на основе цепей Маркова
+  for (let i = 0; i < responseLength; i++) {
+    const possibleNextWords = transitions[currentWord] || transitions.__start.map(w => w.toLowerCase());
+    let nextWord = getRandomElement(possibleNextWords);
+    
+    // Предотвращаем зацикливание и глупые повторы
+    if (nextWord === currentWord || response.includes(nextWord)) {
+        nextWord = getRandomElement(possibleNextWords);
+    }
+    
+    if (['.', '?', '!'].includes(nextWord)) {
+        response[response.length - 1] += nextWord;
+        break; 
+    }
+    
+    response.push(nextWord);
+    currentWord = nextWord;
+  }
+  
+  // 4. Форматируем финальный ответ
+  let finalResponse = response.join(' ');
+  // Убираем пробелы перед знаками препинания
+  finalResponse = finalResponse.replace(/\s+([.!?])/g, '$1');
+  // Добавляем точку в конце, если ее нет
+  if (!/[.!?]$/.test(finalResponse)) {
+      finalResponse += '.';
+  }
+
+  return finalResponse.charAt(0).toUpperCase() + finalResponse.slice(1);
 }
 
 
 export async function contextualResponse(input: ContextualResponseInput): Promise<ContextualResponseOutput> {
   // Имитация задержки ответа
-  await new Promise(resolve => setTimeout(resolve, 500));
+  await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
   
   const responseText = generateResponse(input.userInput);
 
