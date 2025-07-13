@@ -1,12 +1,10 @@
 'use server';
-
 /**
- * @fileOverview This file defines a flow for generating contextually relevant responses
- * using a Markov chain model with an expanded vocabulary and phrase recognition.
+ * @fileOverview A plant problem diagnosis AI agent.
  *
- * - contextualResponse - A function that takes user input and returns a contextually relevant response.
- * - ContextualResponseInput - The input type for the contextualResponse function.
- * - ContextualResponseOutput - The return type for the contextualResponse function.
+ * - contextualResponse - A function that handles the plant diagnosis process.
+ * - DiagnosePlantInput - The input type for the contextualResponse function.
+ * - DiagnosePlantOutput - The return type for the contextualResponse function.
  */
 
 import {z} from 'zod';
@@ -132,7 +130,6 @@ const vocabulary: string[] = [
     // ... up to 1000 words
 ];
 
-
 const cannedResponses: {[key: string]: string[]} = {
   // Greetings & Farewells
   'привет': ['Привет!', 'Здравствуй!', 'Добрый день! Рад тебя видеть.'],
@@ -252,7 +249,7 @@ const markovChains: {[key: string]: string[]} = {
   'ты': ['думаешь', 'говоришь', 'знаешь', 'хочешь', 'можешь', 'работаешь', 'учишься', 'как', 'бот', 'программист', 'можешь'],
   'он': ['думает', 'говорит', 'знает', 'хочет', 'может', 'работает', 'программист'],
   'мы': ['думаем', 'говорим', 'знаем', 'хотим', 'можем', 'работаем', 'учимся'],
-  'как': ['дела', 'ты', 'настроение', 'жизнь', 'думаешь', 'это', 'работает', 'твои'],
+  'как': ['дела', 'ты', 'настроение', 'жизнь', 'думаешь', 'как', 'работает', 'твои'],
   'что': ['ты', 'это', 'нового', 'делаешь', 'думаешь', 'знаешь', 'такое'],
   'почему': ['ты', 'это', 'так', 'происходит'],
   'кто': ['ты', 'это', 'он'],
@@ -313,30 +310,17 @@ function findBestStartingWords(userInput: string): string[] | null {
 }
 
 
-function generateResponse(userInput: string): string {
-  // Correct typos in the user input first
+function generateResponseFromMarkov(userInput: string): string {
   const correctedInput = userInput
     .toLowerCase()
     .replace(/[.,!?]/g, '')
     .split(/\s+/)
     .map(word => correctSpelling(word, vocabulary))
     .join(' ');
-
-  // Prioritize checking for full phrase matches in canned responses
-  for (const phrase in cannedResponses) {
-    if (phrase === 'default') continue;
-    
-    const regex = new RegExp(`\\b${phrase}\\b`);
-    if (regex.test(correctedInput)) {
-      const possibleResponses = cannedResponses[phrase];
-      return possibleResponses[Math.floor(Math.random() * possibleResponses.length)];
-    }
-  }
-
+  
   const startingPair = findBestStartingWords(correctedInput);
   
   if (!startingPair) {
-      // If no relevant starting point is found, use a generic fallback
       const defaultResponses = cannedResponses['default'];
       return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
   }
@@ -386,12 +370,10 @@ function generateResponse(userInput: string): string {
     }
   }
   
-  // Clean up response starting with __start__
   if(response[0] === '__start__') {
       response = response.slice(1);
   }
 
-  // Fallback to a default canned response if the generated response is too short or nonsensical
   if (response.length < 2) {
       const defaultResponses = cannedResponses['default'];
       return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
@@ -408,6 +390,31 @@ function generateResponse(userInput: string): string {
   
   return finalResponse.replace(/\s+([.?!...])/, '$1');
 }
+
+function generateResponse(userInput: string): string {
+  // Correct typos in the user input first
+  const correctedInput = userInput
+    .toLowerCase()
+    .replace(/[.,!?]/g, '')
+    .split(/\s+/)
+    .map(word => correctSpelling(word, vocabulary))
+    .join(' ');
+
+  // Prioritize checking for full phrase matches in canned responses
+  for (const phrase in cannedResponses) {
+    if (phrase === 'default') continue;
+    
+    const regex = new RegExp(`\\b${phrase}\\b`);
+    if (regex.test(correctedInput)) {
+      const possibleResponses = cannedResponses[phrase];
+      return possibleResponses[Math.floor(Math.random() * possibleResponses.length)];
+    }
+  }
+
+  // If no direct match, fall back to creative generation
+  return generateResponseFromMarkov(userInput);
+}
+
 
 // --- End of the bot's "brain" ---
 
