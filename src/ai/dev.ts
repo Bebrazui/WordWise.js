@@ -1,4 +1,4 @@
 import { config } from 'dotenv';
 config();
 
-import '@/ai/flows/contextual-response.ts';
+import '@/ai/flows/contextual-response';

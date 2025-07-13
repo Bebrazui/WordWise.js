@@ -9,7 +9,7 @@
  */
 
 import {ai} from '@/ai/genkit';
-import {z} from 'genkit';
+import {z} from 'zod';
 
 const ContextualResponseInputSchema = z.object({
   userInput: z
@@ -27,22 +27,25 @@ export async function contextualResponse(input: ContextualResponseInput): Promis
   return contextualResponseFlow(input);
 }
 
-const prompt = ai.definePrompt({
-  name: 'contextualResponsePrompt',
-  input: {schema: ContextualResponseInputSchema},
-  output: {schema: ContextualResponseOutputSchema},
-  prompt: `You are a chatbot with a limited vocabulary of 1000 words. Respond to the user input in a contextually relevant manner using only words from your vocabulary.\n\nUser Input: {{{userInput}}}`,
-  model: 'my-custom-model',
-});
-
 const contextualResponseFlow = ai.defineFlow(
   {
     name: 'contextualResponseFlow',
     inputSchema: ContextualResponseInputSchema,
     outputSchema: ContextualResponseOutputSchema,
   },
-  async input => {
-    const {output} = await prompt(input);
-    return output!;
+  async ({ userInput }) => {
+    const llmResponse = await ai.generate({
+      model: 'my-custom-model',
+      prompt: `You are a chatbot with a limited vocabulary of 1000 words. Respond to the user input in a contextually relevant manner using only words from your vocabulary.\n\nUser Input: ${userInput}`,
+      output: {
+        schema: ContextualResponseOutputSchema,
+      }
+    });
+
+    const output = llmResponse.output();
+    if (!output) {
+        throw new Error("No output generated");
+    }
+    return output;
   }
 );

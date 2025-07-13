@@ -17,23 +17,20 @@ const myModel = defineModel(
       },
     },
   },
-  async (input, config, stream) => {
+  async (request, stream) => {
     await new Promise(resolve => setTimeout(resolve, 500));
-    const responseText = `This is a placeholder response for: ${input.prompt[0].text}`;
+    const responseText = `This is a placeholder response for: ${request.prompt[0].text}`;
     if (stream) {
-      stream({
-        index: 0,
-        content: [{text: responseText}],
-      });
+      stream.text(responseText);
       return {
         candidates: [
           {
             index: 0,
             finishReason: 'stop',
-            message: {
-              role: 'model',
-              content: [{text: responseText}],
-            },
+            output: {
+                role: 'model',
+                content: [{text: responseText}]
+            }
           },
         ],
       };
@@ -43,10 +40,10 @@ const myModel = defineModel(
           {
             index: 0,
             finishReason: 'stop',
-            message: {
-              role: 'model',
-              content: [{text: responseText}],
-            },
+            output: {
+                role: 'model',
+                content: [{text: responseText}]
+            }
           },
         ],
       };
