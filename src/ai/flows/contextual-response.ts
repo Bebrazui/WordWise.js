@@ -77,10 +77,9 @@ function correctSpelling(word: string, vocabulary: string[]): string {
     return minDistance <= threshold ? bestMatch : word;
 }
 
-
 const vocabulary: string[] = [
     'привет', 'здравствуй', 'добрый день', 'добрый вечер', 'доброе утро', 'пока', 'до свидания', 'увидимся', 'рад был пообщаться',
-    'как дела', 'что нового', 'как ты', 'что делаешь', 'чем занимаешься', 'расскажи о себе', 'кто ты', 'как настроение',
+    'как дела', 'что нового', 'как ты', 'что делаешь', 'чем занимаешься', 'расскажи о себе', 'кто ты', 'как настроение', 'что ты умеешь', 'ты бот',
     'хорошо', 'отлично', 'неплохо', 'так себе', 'замечательно', 'нормально', 'я в порядке', 'все хорошо', 'бывает и лучше',
     'радость', 'грусть', 'удивление', 'скука', 'интерес', 'счастье', 'злость', 'спокойствие', 'вдохновение', 'любопытство',
     'я', 'ты', 'он', 'она', 'мы', 'вы', 'они', 'человек', 'друг', 'программист', 'собеседник', 'бот', 'искусственный интеллект',
@@ -107,6 +106,11 @@ const vocabulary: string[] = [
     'ну', 'эм', 'вот', 'кстати', 'знаешь', 'хм', 'понимаешь',
     'анализировать', 'строить', 'генерировать', 'отвечать', 'предполагать', 'советовать', 'обсуждать', 'запоминать',
     'язык', 'модель', 'вероятность', 'статистика', 'контекст', 'диалог', 'цель', 'задача', 'общение', 'юмор',
+    'спасибо', 'благодарю', 'извини', 'прости', 'да', 'конечно', 'согласен', 'нет', 'не согласен',
+    'расскажи шутку', 'пошути', 'у тебя есть чувства', 'ты умный', 'что такое искусственный интеллект', 'расскажи про нейросети',
+    'в чем смысл жизни', 'что такое счастье', 'что такое любовь', 'что ты думаешь о', 'тебе нравится', 'что лучше',
+    'какое у тебя хобби', 'ты любишь музыку', 'посоветуй книгу', 'какой фильм посмотреть', 'который час', 'сколько времени',
+    'какая сегодня погода', 'прогноз погоды'
 ];
 
 const intents: {[key: string]: string[]} = {
@@ -211,7 +215,7 @@ const markovChains: {[key: string]: string[]} = {
   'ты': ['думаешь', 'говоришь', 'знаешь', 'хочешь', 'можешь', 'работаешь', 'учишься', 'как', 'бот', 'программист', 'можешь'],
   'он': ['думает', 'говорит', 'знает', 'хочет', 'может', 'работает', 'программист'],
   'мы': ['думаем', 'говорим', 'знаем', 'хотим', 'можем', 'работаем', 'учимся'],
-  'как': ['дела', 'ты', 'настроение', 'жизнь', 'думаешь', 'как', 'работает', 'твои'],
+  'как': ['дела', 'ты', 'настроение', 'жизнь', 'думаешь', 'работает', 'твои'],
   'что': ['ты', 'это', 'нового', 'делаешь', 'думаешь', 'знаешь', 'такое'],
   'почему': ['ты', 'это', 'так', 'происходит'],
   'кто': ['ты', 'это', 'он'],
@@ -241,7 +245,7 @@ const markovChains: {[key: string]: string[]} = {
   'в': ['мире', 'жизни', 'работе', 'программе', 'интернете', 'этом', 'чем'],
   'на': ['работе', 'столе', 'экране', 'самом', 'деле'],
   'о': ['жизни', 'работе', 'программировании', 'тебе', 'смысле', 'себе'],
-  'с': ['тобой', 'другом', 'компьютером', 'радостью', 'с', 'точки', 'зрения'],
+  'с': ['тобой', 'другом', 'компьютером', 'радостью', 'точки', 'зрения'],
   'и': ['я', 'ты', 'он', 'она', 'это', 'поэтому', 'еще'],
   'а': ['я', 'ты', 'что', 'если', 'может', 'быть', 'у'],
   'но': ['это', 'я', 'ты', 'всегда', 'иногда'],
@@ -249,9 +253,33 @@ const markovChains: {[key: string]: string[]} = {
   'если': ['ты', 'я', 'это', 'то', 'подумать'],
 };
 
+const badBigrams = new Set([
+    'привет них', 'как них', 'что них',
+    'я ты', 'ты я', 'он мы', 'мы они',
+    'это в', 'это на', 'в на', 'с о',
+    'потому если', 'если потому', 'чтобы и',
+    'вопрос ответ', 'ответ вопрос',
+    'программа них',
+]);
+
+function isResponseValid(response: string): boolean {
+    const words = response.toLowerCase().split(/\s+/);
+    if (words.length < 2) return true;
+
+    for (let i = 0; i < words.length - 1; i++) {
+        const bigram = `${words[i]} ${words[i+1]}`;
+        if (badBigrams.has(bigram)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+
 function findBestStartingWords(userInput: string): string[] | null {
     const words = userInput.toLowerCase().replace(/[.,?]/g, '').split(/\s+/).filter(Boolean);
     
+    // Prefer trigrams or bigrams from user input that exist in our chains
     for (let i = 0; i < words.length - 1; i++) {
         const bigram = `${words[i]} ${words[i+1]}`;
         if (markovChains[bigram]) {
@@ -259,6 +287,7 @@ function findBestStartingWords(userInput: string): string[] | null {
         }
     }
     
+    // Fallback to the last known word from user input
     const knownWords = words.filter(word => markovChains[word]);
     if (knownWords.length > 0) {
         const lastKnownWord = knownWords[knownWords.length - 1];
@@ -270,71 +299,72 @@ function findBestStartingWords(userInput: string): string[] | null {
 
 
 function generateResponseFromMarkov(userInput: string): string {
-  const correctedInput = userInput
-    .toLowerCase()
-    .replace(/[.,!?]/g, '')
-    .split(/\s+/)
-    .map(word => correctSpelling(word, vocabulary))
-    .join(' ');
-  
-  const startingWords = findBestStartingWords(correctedInput);
-  
-  let response: string[];
+    const correctedInput = userInput
+      .toLowerCase()
+      .replace(/[.,!?]/g, '')
+      .split(/\s+/)
+      .map(word => correctSpelling(word, vocabulary))
+      .join(' ');
+    
+    const startingWords = findBestStartingWords(correctedInput);
+    
+    let response: string[];
 
-  if (!startingWords) {
-      const startWords = markovChains['__start__'];
-      response = [startWords[Math.floor(Math.random() * startWords.length)]];
-  } else {
-      response = [...startingWords];
-  }
+    if (!startingWords) {
+        const startWords = markovChains['__start__'];
+        response = [startWords[Math.floor(Math.random() * startWords.length)]];
+    } else {
+        response = [...startingWords];
+    }
 
+    const isShortAnswer = correctedInput.split(/\s+/).length <= 2;
+    const sentenceLength = isShortAnswer ? (Math.floor(Math.random() * 4) + 3) : (Math.floor(Math.random() * 8) + 6);
 
-  const isShortAnswer = correctedInput.split(/\s+/).length <= 2;
-  const sentenceLength = isShortAnswer ? (Math.floor(Math.random() * 4) + 3) : (Math.floor(Math.random() * 8) + 6);
+    for (let i = response.length; i < sentenceLength; i++) {
+      const lastTwoWords = response.slice(-2).join(' ');
+      const lastWord = response[response.length - 1];
+      
+      let possibleNextWords = markovChains[lastTwoWords];
+      
+      if (!possibleNextWords) {
+          possibleNextWords = markovChains[lastWord];
+      }
 
-  for (let i = response.length; i < sentenceLength; i++) {
-    const lastTwoWords = response.slice(-2).join(' ');
+      if (!possibleNextWords || possibleNextWords.length === 0) {
+          break; 
+      }
+      
+      let nextWord = possibleNextWords[Math.floor(Math.random() * possibleNextWords.length)];
+      
+      // Avoid immediate repetition
+      if (lastWord === nextWord) {
+          nextWord = possibleNextWords[Math.floor(Math.random() * possibleNextWords.length)];
+          if (lastWord === nextWord) break; 
+      }
+      
+      response.push(nextWord);
+      
+      // Stop if we're going into an unknown territory
+      if (!markovChains[response.slice(-2).join(' ')] && !markovChains[nextWord]) {
+          break;
+      }
+    }
+    
+    if (response.length < 2) {
+        const defaultResponses = cannedResponses['default'];
+        return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
+    }
+
+    let finalResponse = response.join(' ');
+    finalResponse = finalResponse.charAt(0).toUpperCase() + finalResponse.slice(1);
+    
     const lastWord = response[response.length - 1];
-    
-    let possibleNextWords = markovChains[lastTwoWords];
-    
-    if (!possibleNextWords) {
-        possibleNextWords = markovChains[lastWord];
-    }
-
-    if (!possibleNextWords || possibleNextWords.length === 0) {
-        break; 
+    if (lastWord && !markovChains['__end__'].includes(lastWord) && !/[.?!]/.test(lastWord)) {
+        const endChars = markovChains['__end__'] || ['.'];
+        finalResponse += endChars[Math.floor(Math.random() * endChars.length)];
     }
     
-    let nextWord = possibleNextWords[Math.floor(Math.random() * possibleNextWords.length)];
-    
-    if (lastWord === nextWord) {
-        nextWord = possibleNextWords[Math.floor(Math.random() * possibleNextWords.length)];
-        if (lastWord === nextWord) break; 
-    }
-    
-    response.push(nextWord);
-    
-    if (!markovChains[response.slice(-2).join(' ')] && !markovChains[nextWord]) {
-        break;
-    }
-  }
-  
-  if (response.length < 2) {
-      const defaultResponses = cannedResponses['default'];
-      return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
-  }
-
-  let finalResponse = response.join(' ');
-  finalResponse = finalResponse.charAt(0).toUpperCase() + finalResponse.slice(1);
-  
-  const lastWord = response[response.length - 1];
-  if (lastWord && !markovChains['__end__'].includes(lastWord) && !/[.?!]/.test(lastWord)) {
-      const endChars = markovChains['__end__'] || ['.'];
-      finalResponse += endChars[Math.floor(Math.random() * endChars.length)];
-  }
-  
-  return finalResponse.replace(/\s+([.?!...])/, '$1');
+    return finalResponse.replace(/\s+([.?!...])/, '$1');
 }
 
 function generateResponse(userInput: string): string {
@@ -352,7 +382,17 @@ function generateResponse(userInput: string): string {
       return possibleResponses[Math.floor(Math.random() * possibleResponses.length)];
   }
 
-  return generateResponseFromMarkov(userInput);
+  let attempts = 0;
+  while (attempts < 2) {
+      const response = generateResponseFromMarkov(userInput);
+      if (isResponseValid(response)) {
+          return response;
+      }
+      attempts++;
+  }
+
+  const defaultResponses = cannedResponses['default'];
+  return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
 }
 
 
