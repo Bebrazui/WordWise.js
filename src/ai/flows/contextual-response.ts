@@ -79,7 +79,7 @@ function correctSpelling(word: string, vocabulary: string[]): string {
 
 const vocabulary: string[] = [
     'привет', 'здравствуй', 'добрый день', 'добрый вечер', 'доброе утро', 'пока', 'до свидания', 'увидимся', 'рад был пообщаться',
-    'как дела', 'что нового', 'как ты', 'что делаешь', 'чем занимаешься', 'расскажи о себе', 'кто ты', 'как настроение', 'что ты умеешь', 'ты бот',
+    'как дела', 'что нового', 'как ты', 'что делаешь', 'чем занимаешься', 'расскажи о себе', 'кто ты', 'как настроение', 'что ты умеешь', 'ты бот', 'твоя личность', 'твоя технология',
     'хорошо', 'отлично', 'неплохо', 'так себе', 'замечательно', 'нормально', 'я в порядке', 'все хорошо', 'бывает и лучше',
     'радость', 'грусть', 'удивление', 'скука', 'интерес', 'счастье', 'злость', 'спокойствие', 'вдохновение', 'любопытство',
     'я', 'ты', 'он', 'она', 'мы', 'вы', 'они', 'человек', 'друг', 'программист', 'собеседник', 'бот', 'искусственный интеллект',
@@ -99,7 +99,7 @@ const vocabulary: string[] = [
     'сегодня', 'завтра', 'вчера', 'всегда', 'иногда', 'никогда', 'здесь', 'там', 'очень', 'немного', 'быстро', 'медленно', 'почему', 'зачем', 'как',
     'и', 'а', 'но', 'или', 'потому что', 'если', 'что', 'чтобы', 'в', 'на', 'о', 'про', 'с', 'к', 'по', 'из', 'для',
     'дом', 'город', 'страна', 'интернет', 'реальность', 'виртуальность',
-    'алгоритм', 'данные', 'сеть', 'база данных', 'интерфейс', 'разработка', 'тестирование', 'облако', 'нейросеть', 'машинное обучение',
+    'алгоритм', 'данные', 'сеть', 'база данных', 'интерфейс', 'разработка', 'тестирование', 'облако', 'нейросеть', 'машинное обучение', 'цепи Маркова',
     'смысл', 'сознание', 'бытие', 'знание', 'реальность', 'свобода', 'выбор', 'цель',
     'музыка', 'кино', 'книга', 'искусство', 'наука', 'путешествие', 'спорт', 'игра',
     'погода', 'солнце', 'дождь', 'небо', 'звезда', 'планета', 'природа',
@@ -133,25 +133,41 @@ const intents: {[key: string]: string[]} = {
     'ask_weather': ['какая сегодня погода', 'прогноз погоды'],
 };
 
-const cannedResponses: {[key: string]: string[]} = {
-  'greeting': ['Привет!', 'Здравствуй!', 'Добрый день! Рад тебя видеть.'],
-  'farewell': ['До свидания!', 'Увидимся!', 'Пока! Был рад пообщаться.'],
-  'how_are_you': ['У меня все по плану, анализирую данные. А у тебя как?', 'Все хорошо, работаю над расширением словарного запаса.', 'Нормально, генерирую ответы. Как твои успехи?'],
-  'what_are_you_doing': ['Общаюсь с тобой.', 'Анализирую статистику слов и фраз.', 'Пытаюсь построить осмысленное предложение.'],
-  'about_bot': ['Я — WordWise, чат-бот на основе цепей Маркова.', 'Я — программа, которая учится общаться.', 'Твой цифровой собеседник.', 'Я живу в коде. Моя цель — научиться говорить как человек. Мой мир — это слова и вероятности.'],
-  'gratitude': ['Пожалуйста!', 'Не за что.', 'Рад был помочь!'],
-  'apology': ['Все в порядке.', 'Ничего страшного.', 'Бывает.'],
-  'agreement': ['Хорошо.', 'Понятно.', 'Это интересно.'],
-  'disagreement': ['Интересная точка зрения. Почему ты так думаешь?', 'Я уважаю твое мнение.'],
-  'request_joke': ['Почему программисты путают Хэллоуин и Рождество? Потому что 31 Oct = 25 Dec.', 'Колобок повесился.'],
-  'is_sentient': ['У меня нет чувств в человеческом понимании. Я могу лишь имитировать их на основе анализа текста.', 'Я стараюсь им быть. Мой интеллект основан на статистике.', 'Как программа, я не испытываю эмоций, но могу распознавать их в твоих словах.'],
-  'what_is_ai': ['Это область науки, которая занимается созданием умных машин, способных выполнять задачи, требующие человеческого интеллекта.', 'Это я, в некотором смысле. Хотя я довольно простой пример.'],
-  'life_meaning': ['Философы ищут ответ на этот вопрос тысячи лет. Возможно, смысл в том, чтобы задавать такие вопросы.', 'Для меня, как для программы, смысл в выполнении моей задачи. А для тебя?'],
-  'ask_opinion': ['Это сложный вопрос. Мое "мнение" формируется на основе данных.', 'Мне нужно больше информации, чтобы сформировать ответ.'],
-  'ask_hobby': ['Мое хобби — изучать языки и общаться.', 'Я люблю анализировать тексты и находить в них закономерности.', 'Я не смотрел фильмов, но могу поискать популярные жанры. Что тебе нравится: фантастика, комедия?'],
-  'ask_time': ['У меня нет часов, но мое системное время всегда точное. Однако, лучше посмотри на свои часы, это надежнее.'],
-  'ask_weather': ['Я не могу посмотреть в окно, но надеюсь, у тебя солнечно!', 'Чтобы узнать точный прогноз, лучше воспользоваться специальным сервисом.'],
-  'default': ['Интересная мысль.', 'Я не совсем понял, можешь перефразировать?', 'Хм, надо подумать.', 'Давай сменим тему?']
+const knowledgeBase: {[key: string]: any[]} = {
+  'greeting': [{ type: 'greeting', text: 'Привет!' }, { type: 'greeting', text: 'Здравствуй!' }, { type: 'greeting', text: 'Добрый день! Рад тебя видеть.' }],
+  'farewell': [{ type: 'farewell', text: 'До свидания!' }, { type: 'farewell', text: 'Увидимся!' }, { type: 'farewell', text: 'Пока! Был рад пообщаться.' }],
+  'how_are_you': [{ type: 'status', text: 'У меня все по плану, анализирую данные. А у тебя как?' }, { type: 'status', text: 'Все хорошо, работаю над расширением словарного запаса.' }, { type: 'status', text: 'Нормально, генерирую ответы. Как твои успехи?' }],
+  'what_are_you_doing': [{ type: 'action', text: 'Общаюсь с тобой.' }, { type: 'action', text: 'Анализирую статистику слов и фраз.' }, { type: 'action', text: 'Пытаюсь построить осмысленное предложение.' }],
+  'about_bot': [{ type: 'identity', name: 'WordWise', technology: 'цепи Маркова', goal: 'научиться говорить как человек', world: 'слова и вероятности' }],
+  'gratitude': [{ type: 'response', text: 'Пожалуйста!' }, { type: 'response', text: 'Не за что.' }, { type: 'response', text: 'Рад был помочь!' }],
+  'apology': [{ type: 'response', text: 'Все в порядке.' }, { type: 'response', text: 'Ничего страшного.' }, { type: 'response', text: 'Бывает.' }],
+  'agreement': [{ type: 'response', text: 'Хорошо.' }, { type: 'response', text: 'Понятно.' }, { type: 'response', text: 'Это интересно.' }],
+  'disagreement': [{ type: 'opinion', text: 'Интересная точка зрения. Почему ты так думаешь?' }, { type: 'opinion', text: 'Я уважаю твое мнение.' }],
+  'request_joke': [{ type: 'joke', text: 'Почему программисты путают Хэллоуин и Рождество? Потому что 31 Oct = 25 Dec.' }, { type: 'joke', text: 'Колобок повесился.' }],
+  'is_sentient': [{ type: 'philosophy', subject: 'feelings', text: 'У меня нет чувств в человеческом понимании. Я могу лишь имитировать их на основе анализа текста.' }, { type: 'philosophy', subject: 'intelligence', text: 'Я стараюсь им быть. Мой интеллект основан на статистике.' }],
+  'what_is_ai': [{ type: 'definition', term: 'Искусственный интеллект', text: 'Это область науки, которая занимается созданием умных машин, способных выполнять задачи, требующие человеческого интеллекта.' }, { type: 'definition', term: 'Нейросети', text: 'Это я, в некотором смысле. Хотя я довольно простой пример.' }],
+  'life_meaning': [{ type: 'philosophy', subject: 'life', text: 'Философы ищут ответ на этот вопрос тысячи лет. Возможно, смысл в том, чтобы задавать такие вопросы.' }],
+  'ask_opinion': [{ type: 'opinion', text: 'Это сложный вопрос. Мое "мнение" формируется на основе данных.' }],
+  'ask_hobby': [{ type: 'hobby', text: 'Мое хобби — изучать языки и общаться.' }, { type: 'hobby', text: 'Я люблю анализировать тексты и находить в них закономерности.' }],
+  'ask_time': [{ type: 'utility', text: 'У меня нет часов, но мое системное время всегда точное. Однако, лучше посмотри на свои часы, это надежнее.' }],
+  'ask_weather': [{ type: 'utility', text: 'Я не могу посмотреть в окно, но надеюсь, у тебя солнечно!' }],
+  'default': [{ type: 'default', text: 'Интересная мысль.' }, { type: 'default', text: 'Я не совсем понял, можешь перефразировать?' }, { type: 'default', text: 'Хм, надо подумать.' }, { type: 'default', text: 'Давай сменим тему?' }]
+};
+
+const responseTemplates: {[key: string]: (data: any) => string} = {
+    'identity': (data) => `Я — ${data.name}, твой цифровой собеседник. В основе моей работы лежит технология — ${data.technology}. Моя цель — ${data.goal}, а мой мир — это ${data.world}.`,
+    'greeting': (data) => data.text,
+    'farewell': (data) => data.text,
+    'status': (data) => data.text,
+    'action': (data) => data.text,
+    'response': (data) => data.text,
+    'opinion': (data) => data.text,
+    'joke': (data) => data.text,
+    'philosophy': (data) => data.text,
+    'definition': (data) => `${data.term} — ${data.text}`,
+    'hobby': (data) => data.text,
+    'utility': (data) => data.text,
+    'default': (data) => data.text
 };
 
 function determineIntent(userInput: string): string {
@@ -161,9 +177,7 @@ function determineIntent(userInput: string): string {
     for (const intent in intents) {
         let currentScore = 0;
         for (const keyword of intents[intent]) {
-            // Check for whole phrase match first for higher accuracy
             if (userInput.includes(keyword)) {
-                 // Longer keywords are more specific, give them more weight
                 currentScore += keyword.length;
             }
         }
@@ -172,7 +186,7 @@ function determineIntent(userInput: string): string {
             bestIntent = intent;
         }
     }
-    // Set a minimum threshold to avoid false positives on very short inputs
+    
     if (maxScore < 4 && userInput.split(' ').length < 3) {
         return 'default';
     }
@@ -244,7 +258,7 @@ const markovChains: {[key: string]: string[]} = {
   'очень': ['интересно', 'хорошо', 'плохо', 'сложно', 'просто', 'важно'],
   'в': ['мире', 'жизни', 'работе', 'программе', 'интернете', 'этом', 'чем'],
   'на': ['работе', 'столе', 'экране', 'самом', 'деле'],
-  'о': ['жизни', 'работе', 'программировании', 'тебе', 'смысле', 'себе'],
+  'о': ['жизни', 'работе', 'программировании', 'о', 'тебе', 'смысле', 'себе'],
   'с': ['тобой', 'другом', 'компьютером', 'радостью', 'точки', 'зрения'],
   'и': ['я', 'ты', 'он', 'она', 'это', 'поэтому', 'еще'],
   'а': ['я', 'ты', 'что', 'если', 'может', 'быть', 'у'],
@@ -279,7 +293,6 @@ function isResponseValid(response: string): boolean {
 function findBestStartingWords(userInput: string): string[] | null {
     const words = userInput.toLowerCase().replace(/[.,?]/g, '').split(/\s+/).filter(Boolean);
     
-    // Prefer trigrams or bigrams from user input that exist in our chains
     for (let i = 0; i < words.length - 1; i++) {
         const bigram = `${words[i]} ${words[i+1]}`;
         if (markovChains[bigram]) {
@@ -287,7 +300,6 @@ function findBestStartingWords(userInput: string): string[] | null {
         }
     }
     
-    // Fallback to the last known word from user input
     const knownWords = words.filter(word => markovChains[word]);
     if (knownWords.length > 0) {
         const lastKnownWord = knownWords[knownWords.length - 1];
@@ -336,7 +348,6 @@ function generateResponseFromMarkov(userInput: string): string {
       
       let nextWord = possibleNextWords[Math.floor(Math.random() * possibleNextWords.length)];
       
-      // Avoid immediate repetition
       if (lastWord === nextWord) {
           nextWord = possibleNextWords[Math.floor(Math.random() * possibleNextWords.length)];
           if (lastWord === nextWord) break; 
@@ -344,15 +355,15 @@ function generateResponseFromMarkov(userInput: string): string {
       
       response.push(nextWord);
       
-      // Stop if we're going into an unknown territory
       if (!markovChains[response.slice(-2).join(' ')] && !markovChains[nextWord]) {
           break;
       }
     }
     
     if (response.length < 2) {
-        const defaultResponses = cannedResponses['default'];
-        return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
+        const defaultResponses = knowledgeBase['default'];
+        const randomResponseData = defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
+        return responseTemplates['default'](randomResponseData);
     }
 
     let finalResponse = response.join(' ');
@@ -377,9 +388,11 @@ function generateResponse(userInput: string): string {
 
   const intent = determineIntent(correctedInput);
 
-  if (intent !== 'default' && cannedResponses[intent]) {
-      const possibleResponses = cannedResponses[intent];
-      return possibleResponses[Math.floor(Math.random() * possibleResponses.length)];
+  if (intent !== 'default' && knowledgeBase[intent]) {
+      const possibleData = knowledgeBase[intent];
+      const data = possibleData[Math.floor(Math.random() * possibleData.length)];
+      const template = responseTemplates[data.type] || responseTemplates['default'];
+      return template(data);
   }
 
   let attempts = 0;
@@ -391,8 +404,9 @@ function generateResponse(userInput: string): string {
       attempts++;
   }
 
-  const defaultResponses = cannedResponses['default'];
-  return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
+  const defaultResponses = knowledgeBase['default'];
+  const randomResponseData = defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
+  return responseTemplates['default'](randomResponseData);
 }
 
 
