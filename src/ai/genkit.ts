@@ -1,13 +1,15 @@
-'use server';
-
 import {genkit} from 'genkit';
-import {defineModel, GenerationCommonConfigSchema} from '@genkit-ai/ai';
+import * as ai from '@genkit-ai/ai';
 import {z} from 'zod';
 
-const myModel = defineModel(
+export const aiInstance = genkit({
+  plugins: [],
+});
+
+aiInstance.defineModel(
   {
     name: 'my-custom-model',
-    configSchema: GenerationCommonConfigSchema,
+    configSchema: ai.GenerationCommonConfigSchema,
     info: {
       label: 'My Custom Model',
       supports: {
@@ -19,39 +21,21 @@ const myModel = defineModel(
   },
   async (request, stream) => {
     await new Promise(resolve => setTimeout(resolve, 500));
-    const responseText = `This is a placeholder response for: ${request.prompt[0].text}`;
+    const responseText = `This is a placeholder response for: ${request.candidates[0].message.content[0].text}`;
     if (stream) {
       stream.text(responseText);
-      return {
-        candidates: [
-          {
-            index: 0,
-            finishReason: 'stop',
-            output: {
-                role: 'model',
-                content: [{text: responseText}]
-            }
-          },
-        ],
-      };
-    } else {
-      return {
-        candidates: [
-          {
-            index: 0,
-            finishReason: 'stop',
-            output: {
-                role: 'model',
-                content: [{text: responseText}]
-            }
-          },
-        ],
-      };
     }
+    return {
+      candidates: [
+        {
+          index: 0,
+          finishReason: 'stop',
+          message: {
+            role: 'model',
+            content: [{text: responseText}],
+          },
+        },
+      ],
+    };
   }
 );
-
-export const ai = genkit({
-  plugins: [],
-  models: [myModel],
-});

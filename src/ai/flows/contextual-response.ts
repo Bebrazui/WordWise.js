@@ -8,7 +8,7 @@
  * - ContextualResponseOutput - The return type for the contextualResponse function.
  */
 
-import {ai} from '@/ai/genkit';
+import {aiInstance as ai} from '@/ai/genkit';
 import {z} from 'zod';
 
 const ContextualResponseInputSchema = z.object({
@@ -42,7 +42,7 @@ const contextualResponseFlow = ai.defineFlow(
       }
     });
 
-    const output = llmResponse.output();
+    const output = llmResponse.output;
     if (!output) {
         throw new Error("No output generated");
     }
