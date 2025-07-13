@@ -1,121 +1,76 @@
 /**
- * @fileoverview A library for non-AI based semantic search using TF-IDF and Cosine Similarity.
+ * @fileoverview A library for AI-based semantic search using TensorFlow.js and the Universal Sentence Encoder.
  * - findBestMatch: Finds the best matching document for a query from a list of documents.
  */
+'use server';
 
-// Simple tokenizer: splits string into words, converts to lowercase, removes punctuation.
-function tokenize(text: string): string[] {
-    return text.toLowerCase().replace(/[.,!?]/g, '').split(/\s+/).filter(Boolean);
-}
+import * as tf from '@tensorflow/tfjs-node';
+import * as use from '@tensorflow-models/universal-sentence-encoder';
 
-// Calculates Term Frequency (TF) for each word in a document.
-function calculateTf(tokens: string[]): Map<string, number> {
-    const tf = new Map<string, number>();
-    const tokenCount = tokens.length;
-    if (tokenCount === 0) return tf;
+let model: use.UniversalSentenceEncoder | null = null;
 
-    for (const token of tokens) {
-        tf.set(token, (tf.get(token) || 0) + 1);
+async function loadModel() {
+    if (!model) {
+        console.log('Loading Universal Sentence Encoder model...');
+        model = await use.load();
+        console.log('Model loaded.');
     }
-
-    for (const [token, count] of tf.entries()) {
-        tf.set(token, count / tokenCount);
-    }
-    return tf;
-}
-
-// Calculates Inverse Document Frequency (IDF) for each word in the corpus.
-function calculateIdf(documents: string[][]): Map<string, number> {
-    const idf = new Map<string, number>();
-    const docCount = documents.length;
-    const wordInDocCount = new Map<string, number>();
-
-    for (const doc of documents) {
-        const uniqueTokens = new Set(doc);
-        for (const token of uniqueTokens) {
-            wordInDocCount.set(token, (wordInDocCount.get(token) || 0) + 1);
-        }
-    }
-
-    for (const [token, count] of wordInDocCount.entries()) {
-        idf.set(token, Math.log(docCount / (1 + count)));
-    }
-    return idf;
-}
-
-// Creates a TF-IDF vector for a document.
-function createVector(tokens: string[], idf: Map<string, number>): Map<string, number> {
-    const tf = calculateTf(tokens);
-    const vector = new Map<string, number>();
-    for (const [token, tfValue] of tf.entries()) {
-        const idfValue = idf.get(token) || 0;
-        vector.set(token, tfValue * idfValue);
-    }
-    return vector;
+    return model;
 }
 
 // Calculates the cosine similarity between two vectors.
-function cosineSimilarity(vecA: Map<string, number>, vecB: Map<string, number>): number {
-    let dotProduct = 0;
-    let magnitudeA = 0;
-    let magnitudeB = 0;
+function cosineSimilarity(vecA: tf.Tensor, vecB: tf.Tensor): number {
+    const dotProduct = tf.dot(vecA, vecB).dataSync()[0];
+    const normA = tf.norm(vecA).dataSync()[0];
+    const normB = tf.norm(vecB).dataSync()[0];
 
-    const allTokens = new Set([...vecA.keys(), ...vecB.keys()]);
-
-    for (const token of allTokens) {
-        const valA = vecA.get(token) || 0;
-        const valB = vecB.get(token) || 0;
-        dotProduct += valA * valB;
-    }
-
-    for (const val of vecA.values()) {
-        magnitudeA += val * val;
-    }
-    magnitudeA = Math.sqrt(magnitudeA);
-
-    for (const val of vecB.values()) {
-        magnitudeB += val * val;
-    }
-    magnitudeB = Math.sqrt(magnitudeB);
-
-    if (magnitudeA === 0 || magnitudeB === 0) {
+    if (normA === 0 || normB === 0) {
         return 0;
     }
 
-    return dotProduct / (magnitudeA * magnitudeB);
+    return dotProduct / (normA * normB);
 }
 
 /**
- * Finds the best matching document for a query from a list of documents.
+ * Finds the best matching document for a query from a list of documents using USE.
  * @param query The user's input string.
  * @param documents An array of strings representing the documents to search through.
  * @returns An object containing the best match and all ratings.
  */
-export function findBestMatch(query: string, documents: string[]): {
+export async function findBestMatch(query: string, documents: string[]): Promise<{
     ratings: { target: string, rating: number }[];
     bestMatch: { target: string, rating: number };
-} {
-    const tokenizedDocs = documents.map(tokenize);
-    const tokenizedQuery = tokenize(query);
+}> {
+    const sentenceEncoder = await loadModel();
+    
+    const sentences = [query, ...documents];
+    const embeddings = await sentenceEncoder.embed(sentences);
 
-    const idf = calculateIdf(tokenizedDocs);
-
-    const queryVector = createVector(tokenizedQuery, idf);
-    const docVectors = tokenizedDocs.map(doc => createVector(doc, idf));
+    const queryVector = embeddings.slice([0, 0], [1, -1]).squeeze();
+    const docVectors = embeddings.slice([1, 0]);
 
     const ratings = [];
     let bestMatch = { target: '', rating: -1 };
 
     for (let i = 0; i < documents.length; i++) {
-        const similarity = cosineSimilarity(queryVector, docVectors[i]);
+        const docVector = docVectors.slice([i, 0], [1, -1]).squeeze();
+        const similarity = cosineSimilarity(queryVector, docVector);
+        
         const rating = { target: documents[i], rating: similarity };
         ratings.push(rating);
+
         if (similarity > bestMatch.rating) {
             bestMatch = rating;
         }
+        
+        docVector.dispose();
     }
-    
+
     ratings.sort((a, b) => b.rating - a.rating);
+    
+    queryVector.dispose();
+    docVectors.dispose();
+    embeddings.dispose();
 
     return { ratings, bestMatch };
 }
