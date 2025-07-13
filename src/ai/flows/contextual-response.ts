@@ -29,6 +29,58 @@ export type ContextualResponseOutput = z.infer<
 
 // --- Start of the bot's "brain" ---
 
+// Levenshtein distance function for typo correction
+function levenshteinDistance(s1: string, s2: string): number {
+    s1 = s1.toLowerCase();
+    s2 = s2.toLowerCase();
+
+    const costs = [];
+    for (let i = 0; i <= s1.length; i++) {
+        let lastValue = i;
+        for (let j = 0; j <= s2.length; j++) {
+            if (i === 0) {
+                costs[j] = j;
+            } else {
+                if (j > 0) {
+                    let newValue = costs[j - 1];
+                    if (s1.charAt(i - 1) !== s2.charAt(j - 1)) {
+                        newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                    }
+                    costs[j - 1] = lastValue;
+                    lastValue = newValue;
+                }
+            }
+        }
+        if (i > 0) {
+            costs[s2.length] = lastValue;
+        }
+    }
+    return costs[s2.length];
+}
+
+function correctSpelling(word: string, vocabulary: string[]): string {
+    if (vocabulary.includes(word)) {
+        return word;
+    }
+
+    let minDistance = Infinity;
+    let bestMatch = word;
+    
+    // Set a threshold based on word length
+    const threshold = word.length > 5 ? 2 : 1;
+
+    for (const vocabWord of vocabulary) {
+        const distance = levenshteinDistance(word, vocabWord);
+        if (distance < minDistance) {
+            minDistance = distance;
+            bestMatch = vocabWord;
+        }
+    }
+
+    return minDistance <= threshold ? bestMatch : word;
+}
+
+
 const vocabulary: string[] = [
     // Greetings and Farewells
     'привет', 'здравствуй', 'добрый день', 'добрый вечер', 'доброе утро', 'пока', 'до свидания', 'увидимся', 'рад был пообщаться',
@@ -247,25 +299,33 @@ function findBestStartingWord(userInput: string): string {
 }
 
 function generateResponse(userInput: string): string {
-  const lowerUserInput = userInput.toLowerCase().trim().replace(/[.,?]/g, '');
+  // Correct typos in the user input first
+  const correctedInput = userInput
+    .toLowerCase()
+    .replace(/[.,?]/g, '')
+    .split(/\s+/)
+    .map(word => correctSpelling(word, vocabulary))
+    .join(' ');
 
   for (const phrase in cannedResponses) {
     if (phrase === 'default') continue;
+    
+    // Check for whole phrase match in the corrected input
     const regex = new RegExp(`\\b${phrase}\\b`);
-    if (regex.test(lowerUserInput)) {
+    if (regex.test(correctedInput)) {
       const possibleResponses = cannedResponses[phrase];
       return possibleResponses[Math.floor(Math.random() * possibleResponses.length)];
     }
   }
 
-  let currentWord = findBestStartingWord(lowerUserInput);
+  let currentWord = findBestStartingWord(correctedInput);
   if (currentWord === '__start__') {
       const startWords = markovChains['__start__'];
       currentWord = startWords[Math.floor(Math.random() * startWords.length)];
   }
 
   let response = [currentWord];
-  const isShortAnswer = lowerUserInput.split(/\s+/).length <= 2;
+  const isShortAnswer = correctedInput.split(/\s+/).length <= 2;
   const sentenceLength = isShortAnswer ? (Math.floor(Math.random() * 4) + 2) : (Math.floor(Math.random() * 7) + 5); // 2-5 words for short, 5-11 for long
 
   for (let i = 0; i < sentenceLength; i++) {
