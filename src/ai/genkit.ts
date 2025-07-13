@@ -1,7 +1,7 @@
 'use server';
 
 import {genkit} from 'genkit';
-import {defineModel, GenerationCommonConfigSchema} from 'genkit/model';
+import {defineModel, GenerationCommonConfigSchema} from '@genkit-ai/ai';
 import {z} from 'zod';
 
 const myModel = defineModel(
