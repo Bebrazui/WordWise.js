@@ -120,6 +120,54 @@ const vocabulary: string[] = [
     'марс', 'температура', 'спутник', 'фобос', 'деймос', 'медузы'
 ];
 
+const synonymLibrary: { [key: string]: string[] } = {
+    'привет': ['здравствуй', 'добрый день', 'добрый вечер'],
+    'пока': ['до свидания', 'увидимся', 'прощай'],
+    'хорошо': ['отлично', 'замечательно', 'прекрасно', 'в порядке'],
+    'плохо': ['не очень', 'так себе', 'неважно'],
+    'думать': ['размышлять', 'считать', 'полагать', 'анализировать'],
+    'говорить': ['сказать', 'сообщать', 'произносить', 'отвечать'],
+    'делать': ['выполнять', 'создавать', 'совершать'],
+    'знать': ['понимать', 'быть в курсе', 'осознавать'],
+    'помочь': ['оказать содействие', 'поддержать', 'быть полезным'],
+    'интересный': ['увлекательный', 'любопытный', 'занимательный', 'необычный'],
+    'человек': ['индивид', 'личность', 'персона'],
+    'бот': ['программа', 'собеседник', 'искусственный интеллект', 'ИИ', 'виртуальный ассистент'],
+    'задача': ['цель', 'миссия', 'задание', 'вопрос'],
+    'ответ': ['реплика', 'реакция', 'решение'],
+    'вопрос': ['запрос', 'обращение', 'интерес'],
+    'проблема': ['сложность', 'затруднение', 'задача'],
+    'решение': ['выход', 'ответ', 'способ'],
+    'красивый': ['прекрасный', 'восхитительный', 'эстетичный'],
+    'важный': ['значимый', 'существенный', 'ключевой'],
+    'простой': ['легкий', 'элементарный', 'понятный'],
+    'сложный': ['трудный', 'непростой', 'запутанный'],
+    'создавать': ['генерировать', 'разрабатывать', 'строить'],
+    'работа': ['деятельность', 'труд', 'занятие'],
+    'цель': ['задача', 'намерение', 'стремление'],
+    'идея': ['мысль', 'концепция', 'замысел'],
+    'мир': ['вселенная', 'реальность', 'окружение']
+};
+
+function replaceWithSynonyms(text: string): string {
+    const words = text.split(/(\s+|[.,!?])/); // Split by spaces and punctuation
+    const newWords = words.map(word => {
+        const lowerWord = word.toLowerCase();
+        if (synonymLibrary[lowerWord] && Math.random() > 0.6) { // Replace with 40% probability
+            const synonyms = synonymLibrary[lowerWord];
+            const randomSynonym = synonyms[Math.floor(Math.random() * synonyms.length)];
+            // Preserve case
+            if (word[0] === word[0].toUpperCase()) {
+                return randomSynonym.charAt(0).toUpperCase() + randomSynonym.slice(1);
+            }
+            return randomSynonym;
+        }
+        return word;
+    });
+    return newWords.join('');
+}
+
+
 const intents: {[key: string]: string[]} = {
     'greeting': ['привет', 'здравствуй', 'добрый день', 'добрый вечер', 'доброе утро'],
     'farewell': ['пока', 'до свидания', 'увидимся'],
@@ -421,26 +469,35 @@ function generateResponse(userInput: string): string {
     .join(' ');
 
   const intent = determineIntent(correctedInput);
+  
+  let baseResponse: string;
 
   if (intent !== 'default' && knowledgeBase[intent]) {
       const possibleData = knowledgeBase[intent];
       const data = possibleData[Math.floor(Math.random() * possibleData.length)];
       const template = responseTemplates[data.type] || responseTemplates['default'];
-      return template(data);
+      baseResponse = template(data);
+  } else {
+    let attempts = 0;
+    let markovResponse = '';
+    while (attempts < 2) {
+        markovResponse = generateResponseFromMarkov(userInput);
+        if (isResponseValid(markovResponse)) {
+            break;
+        }
+        attempts++;
+    }
+
+    if (!isResponseValid(markovResponse)) {
+        const defaultResponses = knowledgeBase['default'];
+        const randomResponseData = defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
+        baseResponse = responseTemplates['default'](randomResponseData);
+    } else {
+        baseResponse = markovResponse;
+    }
   }
 
-  let attempts = 0;
-  while (attempts < 2) {
-      const response = generateResponseFromMarkov(userInput);
-      if (isResponseValid(response)) {
-          return response;
-      }
-      attempts++;
-  }
-
-  const defaultResponses = knowledgeBase['default'];
-  const randomResponseData = defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
-  return responseTemplates['default'](randomResponseData);
+  return replaceWithSynonyms(baseResponse);
 }
 
 
