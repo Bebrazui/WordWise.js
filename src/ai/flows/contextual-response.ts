@@ -32,6 +32,7 @@ const prompt = ai.definePrompt({
   input: {schema: ContextualResponseInputSchema},
   output: {schema: ContextualResponseOutputSchema},
   prompt: `You are a chatbot with a limited vocabulary of 1000 words. Respond to the user input in a contextually relevant manner using only words from your vocabulary.\n\nUser Input: {{{userInput}}}`,
+  model: 'my-custom-model',
 });
 
 const contextualResponseFlow = ai.defineFlow(
