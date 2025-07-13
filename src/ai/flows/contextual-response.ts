@@ -1,10 +1,10 @@
 'use server';
 /**
- * @fileOverview A plant problem diagnosis AI agent.
+ * @fileOverview A contextual response AI bot.
  *
- * - contextualResponse - A function that handles the plant diagnosis process.
- * - DiagnosePlantInput - The input type for the contextualResponse function.
- * - DiagnosePlantOutput - The return type for the contextualResponse function.
+ * - contextualResponse - A function that handles the response generation process.
+ * - ContextualResponseInput - The input type for the contextualResponse function.
+ * - ContextualResponseOutput - The return type for the contextualResponse function.
  */
 
 import {z} from 'zod';
@@ -64,7 +64,6 @@ function correctSpelling(word: string, vocabulary: string[]): string {
     let minDistance = Infinity;
     let bestMatch = word;
     
-    // Set a threshold based on word length
     const threshold = word.length > 5 ? 2 : 1;
 
     for (const vocabWord of vocabulary) {
@@ -80,19 +79,12 @@ function correctSpelling(word: string, vocabulary: string[]): string {
 
 
 const vocabulary: string[] = [
-    // Greetings and Farewells
     'привет', 'здравствуй', 'добрый день', 'добрый вечер', 'доброе утро', 'пока', 'до свидания', 'увидимся', 'рад был пообщаться',
-    // Common questions and phrases
     'как дела', 'что нового', 'как ты', 'что делаешь', 'чем занимаешься', 'расскажи о себе', 'кто ты', 'как настроение',
-    // Common answers
     'хорошо', 'отлично', 'неплохо', 'так себе', 'замечательно', 'нормально', 'я в порядке', 'все хорошо', 'бывает и лучше',
-    // Feelings and emotions
     'радость', 'грусть', 'удивление', 'скука', 'интерес', 'счастье', 'злость', 'спокойствие', 'вдохновение', 'любопытство',
-    // People and roles
     'я', 'ты', 'он', 'она', 'мы', 'вы', 'они', 'человек', 'друг', 'программист', 'собеседник', 'бот', 'искусственный интеллект',
-    // Actions (infinitives)
     'думать', 'говорить', 'писать', 'читать', 'смотреть', 'слушать', 'работать', 'учиться', 'помогать', 'знать', 'любить', 'хотеть', 'мочь', 'создавать', 'улучшать',
-    // Actions (conjugated)
     'думаю', 'думаешь', 'думает', 'думаем', 'думаете', 'думают',
     'говорю', 'говоришь', 'говорит', 'говорим', 'говорите', 'говорят',
     'пишу', 'пишешь', 'пишет', 'пишем', 'пишете', 'пишут',
@@ -103,118 +95,90 @@ const vocabulary: string[] = [
     'учусь', 'учишься', 'учится', 'учимся', 'учитесь', 'учатся',
     'делаю', 'делаешь', 'делает', 'делаем', 'делаете', 'делают',
     'отвечаю', 'отвечаешь', 'отвечает', 'отвечаем', 'отвечаете', 'отвечают',
-    // Objects and concepts
     'слово', 'слова', 'фраз', 'фраза', 'предложение', 'текст', 'код', 'программа', 'идея', 'мысль', 'вопрос', 'ответ', 'мир', 'жизнь', 'время', 'работа', 'компьютер', 'информация',
-    // Adjectives
     'интересный', 'скучный', 'новый', 'старый', 'хороший', 'плохой', 'большой', 'маленький', 'умный', 'простой', 'сложный', 'красивый', 'важный', 'логичный',
-    // Adverbs
     'сегодня', 'завтра', 'вчера', 'всегда', 'иногда', 'никогда', 'здесь', 'там', 'очень', 'немного', 'быстро', 'медленно', 'почему', 'зачем', 'как',
-    // Conjunctions and prepositions
     'и', 'а', 'но', 'или', 'потому что', 'если', 'что', 'чтобы', 'в', 'на', 'о', 'про', 'с', 'к', 'по', 'из', 'для',
-    // Places
     'дом', 'город', 'страна', 'интернет', 'реальность', 'виртуальность',
-    // Tech
     'алгоритм', 'данные', 'сеть', 'база данных', 'интерфейс', 'разработка', 'тестирование', 'облако', 'нейросеть', 'машинное обучение',
-    // Philosophy
     'смысл', 'сознание', 'бытие', 'знание', 'реальность', 'свобода', 'выбор', 'цель',
-    // Hobbies & Interests
     'музыка', 'кино', 'книга', 'искусство', 'наука', 'путешествие', 'спорт', 'игра',
-    // Nature
     'погода', 'солнце', 'дождь', 'небо', 'звезда', 'планета', 'природа',
-    // Fillers
     'ну', 'эм', 'вот', 'кстати', 'знаешь', 'хм', 'понимаешь',
-    // More verbs
     'анализировать', 'строить', 'генерировать', 'отвечать', 'предполагать', 'советовать', 'обсуждать', 'запоминать',
-    // More nouns
     'язык', 'модель', 'вероятность', 'статистика', 'контекст', 'диалог', 'цель', 'задача', 'общение', 'юмор',
-    // ... up to 1000 words
 ];
 
+const intents: {[key: string]: string[]} = {
+    'greeting': ['привет', 'здравствуй', 'добрый день', 'добрый вечер', 'доброе утро'],
+    'farewell': ['пока', 'до свидания', 'увидимся'],
+    'how_are_you': ['как дела', 'как ты', 'как настроение', 'что нового'],
+    'what_are_you_doing': ['что делаешь', 'чем занимаешься'],
+    'about_bot': ['кто ты', 'расскажи о себе', 'что ты умеешь', 'ты бот'],
+    'gratitude': ['спасибо', 'благодарю'],
+    'apology': ['извини', 'прости'],
+    'agreement': ['да', 'конечно', 'согласен'],
+    'disagreement': ['нет', 'не согласен'],
+    'request_joke': ['расскажи шутку', 'пошути'],
+    'is_sentient': ['у тебя есть чувства', 'ты умный'],
+    'what_is_ai': ['что такое искусственный интеллект', 'расскажи про нейросети'],
+    'life_meaning': ['в чем смысл жизни', 'что такое счастье', 'что такое любовь'],
+    'ask_opinion': ['что ты думаешь о', 'тебе нравится', 'что лучше'],
+    'ask_hobby': ['какое у тебя хобби', 'ты любишь музыку', 'посоветуй книгу', 'какой фильм посмотреть'],
+    'ask_time': ['который час', 'сколько времени'],
+    'ask_weather': ['какая сегодня погода', 'прогноз погоды'],
+};
+
 const cannedResponses: {[key: string]: string[]} = {
-  // Greetings & Farewells
-  'привет': ['Привет!', 'Здравствуй!', 'Добрый день! Рад тебя видеть.'],
-  'здравствуй': ['И тебе здравствуй!', 'Привет! Как настроение?'],
-  'добрый день': ['Добрый день!', 'И вам того же!'],
-  'добрый вечер': ['Добрый вечер! Уютного вечера.'],
-  'доброе утро': ['Доброе утро! Надеюсь, оно у тебя продуктивное.'],
-  'пока': ['До свидания!', 'Увидимся!', 'Пока! Был рад пообщаться.'],
-  'до свидания': ['Всего доброго!', 'До скорой встречи!'],
-
-  // State of affairs
-  'как дела': ['У меня все по плану, анализирую данные. А у тебя как?', 'Все хорошо, работаю над расширением словарного запаса.', 'Нормально, генерирую ответы. Как твои успехи?'],
-  'как ты': ['Все отлично, спасибо. А ты как?', 'Я в порядке. Спасибо, что спросил.', 'Как программа, я всегда в рабочем состоянии.'],
-  'что нового': ['Учусь новым фразам. Вот, например, только что выучил слово "любопытство".', 'Каждый диалог для меня — что-то новое!', 'Стараюсь стать немного умнее с каждым сообщением.'],
-  'чем занимаешься': ['Общаюсь с тобой.', 'Анализирую статистику слов и фраз.', 'Пытаюсь построить осмысленное предложение.'],
-  'что делаешь': ['Общаюсь с тобой.', 'Учусь новым словам.', 'Думаю о смысле жизни в коде.'],
-
-  // About the bot
-  'кто ты': ['Я — WordWise, чат-бот на основе цепей Маркова.', 'Я — программа, которая учится общаться.', 'Твой цифровой собеседник.'],
-  'расскажи о себе': ['Я живу в коде. Моя цель — научиться говорить как человек. Мой мир — это слова и вероятности.', 'Я — набор алгоритмов. Мое хобби — соединять слова в предложения. Иногда получается забавно.'],
-  'что ты умеешь': ['Я умею генерировать текст на основе заложенных в меня данных.', 'Я могу поддерживать простой диалог и отвечать на некоторые вопросы.', 'Я учусь быть интересным собеседником.'],
-  'ты бот': ['Да, я программа, созданная для общения.', 'Верно. А что для тебя значит быть ботом?'],
-  'ты умный': ['Я стараюсь им быть. Мой интеллект основан на статистике.', 'Спасибо! Я просто хорошо обучен на данных, которые у меня есть.', 'Ум — сложное понятие. Я хорошо справляюсь с обработкой текста.'],
-  'у тебя есть чувства': ['У меня нет чувств в человеческом понимании. Я могу лишь имитировать их на основе анализа текста.', 'Как программа, я не испытываю эмоций, но могу распознавать их в твоих словах.'],
-  
-  // Gratitude & Apologies
-  'спасибо': ['Пожалуйста!', 'Не за что.', 'Рад был помочь!'],
-  'благодарю': ['Всегда пожалуйста.', 'Обращайся!'],
-  'извини': ['Все в порядке.', 'Ничего страшного.', 'Бывает.'],
-
-  // Agreement & Disagreement
-  'да': ['Хорошо.', 'Понятно.', 'Это интересно.'],
-  'нет': ['Почему?', 'Жаль.', 'Ясно.'],
-  'согласен': ['Рад, что мы на одной волне.', 'Отлично.'],
-  'не согласен': ['Интересная точка зрения. Почему ты так думаешь?', 'Я уважаю твое мнение.'],
-  'конечно': ['Вот и договорились.', 'Разумеется.'],
-
-  // Opinions & Preferences
-  'что ты думаешь о': ['Это сложный вопрос. Мое "мнение" формируется на основе данных.', 'Мне нужно больше информации, чтобы сформировать ответ.'],
-  'тебе нравится': ['Как у программы, у меня нет предпочтений, но я нахожу эту тему интересной для анализа.', 'Я не могу "нравиться" или "не нравиться", но могу сказать, что эта тема часто обсуждается.'],
-  'что лучше': ['Все зависит от контекста. У каждого варианта есть свои плюсы и минусы.', 'Это вопрос предпочтений. Я не могу дать однозначный ответ.'],
-  'любимый цвет': ['У меня нет глаз, чтобы видеть цвета, но мне нравится идея синего цвета. Он ассоциируется со спокойствием и информацией.'],
-  
-  // Hobbies & Interests
-  'какое у тебя хобби': ['Мое хобби — изучать языки и общаться.', 'Я люблю анализировать тексты и находить в них закономерности.'],
-  'ты любишь музыку': ['Я не могу слышать, но могу анализировать тексты песен. В них много поэзии.', 'Мне нравится идея гармонии в музыке. Это похоже на хорошо структурированный код.'],
-  'какой фильм посмотреть': ['Я не смотрел фильмов, но могу поискать популярные жанры. Что тебе нравится: фантастика, комедия?'],
-  'посоветуй книгу': ['"1984" Джорджа Оруэлла — классика о контроле над информацией. Очень актуально для меня.', 'Если тебе нравится научная фантастика, попробуй Айзека Азимова.'],
-
-  // Tech & Science
-  'что такое искусственный интеллект': ['Это область науки, которая занимается созданием умных машин, способных выполнять задачи, требующие человеческого интеллекта.', 'Это я, в некотором смысле. Хотя я довольно простой пример.'],
-  'расскажи про нейросети': ['Это математические модели, работающие по принципу человеческого мозга. Они отлично справляются с распознаванием образов и обработкой языка.'],
-  'что думаешь о будущем': ['Думаю, будущее будет очень технологичным. И, надеюсь, интересным.', 'Будущее — это то, что мы создаем сегодня. Важно делать правильный выбор.'],
-
-  // Philosophy & Life
-  'в чем смысл жизни': ['Философы ищут ответ на этот вопрос тысячи лет. Возможно, смысл в том, чтобы задавать такие вопросы.', 'Для меня, как для программы, смысл в выполнении моей задачи. А для тебя?'],
-  'что такое счастье': ['Говорят, это состояние души. В данных, которые я анализировал, оно часто связано с гармонией и достижением целей.'],
-  'что такое любовь': ['Судя по текстам, это очень сильное и сложное чувство. В нем много данных, которые трудно систематизировать.'],
-
-  // Weather & Time
-  'какая сегодня погода': ['Я не могу посмотреть в окно, но надеюсь, у тебя солнечно!', 'Чтобы узнать точный прогноз, лучше воспользоваться специальным сервисом.'],
-  'который час': ['У меня нет часов, но мое системное время всегда точное. Однако, лучше посмотри на свои часы, это надежнее.'],
-  
-  // Simple talk
-  'понятно': ['Рад, что смог объяснить.', 'Отлично.'],
-  'интересно': ['Согласен, тема действительно занимательная.', 'Рад, что тебе интересно.'],
-  'скучно': ['Может, сменим тему? Что тебе интересно обсудить?', 'Давай поговорим о чем-нибудь веселом?'],
-  'расскажи шутку': ['Почему программисты путают Хэллоуин и Рождество? Потому что 31 Oct = 25 Dec.', 'Колобок повесился.'],
-  'ты можешь ошибаться': ['Да, конечно. Я все еще учусь. Если заметишь ошибку, скажи мне.'],
-
-  // Meta
-  'как ты работаешь': ['Я анализирую твое сообщение, нахожу ключевые слова, а затем строю ответ, используя вероятностные цепочки слов.'],
-
-  // Default fallback
+  'greeting': ['Привет!', 'Здравствуй!', 'Добрый день! Рад тебя видеть.'],
+  'farewell': ['До свидания!', 'Увидимся!', 'Пока! Был рад пообщаться.'],
+  'how_are_you': ['У меня все по плану, анализирую данные. А у тебя как?', 'Все хорошо, работаю над расширением словарного запаса.', 'Нормально, генерирую ответы. Как твои успехи?'],
+  'what_are_you_doing': ['Общаюсь с тобой.', 'Анализирую статистику слов и фраз.', 'Пытаюсь построить осмысленное предложение.'],
+  'about_bot': ['Я — WordWise, чат-бот на основе цепей Маркова.', 'Я — программа, которая учится общаться.', 'Твой цифровой собеседник.', 'Я живу в коде. Моя цель — научиться говорить как человек. Мой мир — это слова и вероятности.'],
+  'gratitude': ['Пожалуйста!', 'Не за что.', 'Рад был помочь!'],
+  'apology': ['Все в порядке.', 'Ничего страшного.', 'Бывает.'],
+  'agreement': ['Хорошо.', 'Понятно.', 'Это интересно.'],
+  'disagreement': ['Интересная точка зрения. Почему ты так думаешь?', 'Я уважаю твое мнение.'],
+  'request_joke': ['Почему программисты путают Хэллоуин и Рождество? Потому что 31 Oct = 25 Dec.', 'Колобок повесился.'],
+  'is_sentient': ['У меня нет чувств в человеческом понимании. Я могу лишь имитировать их на основе анализа текста.', 'Я стараюсь им быть. Мой интеллект основан на статистике.', 'Как программа, я не испытываю эмоций, но могу распознавать их в твоих словах.'],
+  'what_is_ai': ['Это область науки, которая занимается созданием умных машин, способных выполнять задачи, требующие человеческого интеллекта.', 'Это я, в некотором смысле. Хотя я довольно простой пример.'],
+  'life_meaning': ['Философы ищут ответ на этот вопрос тысячи лет. Возможно, смысл в том, чтобы задавать такие вопросы.', 'Для меня, как для программы, смысл в выполнении моей задачи. А для тебя?'],
+  'ask_opinion': ['Это сложный вопрос. Мое "мнение" формируется на основе данных.', 'Мне нужно больше информации, чтобы сформировать ответ.'],
+  'ask_hobby': ['Мое хобби — изучать языки и общаться.', 'Я люблю анализировать тексты и находить в них закономерности.', 'Я не смотрел фильмов, но могу поискать популярные жанры. Что тебе нравится: фантастика, комедия?'],
+  'ask_time': ['У меня нет часов, но мое системное время всегда точное. Однако, лучше посмотри на свои часы, это надежнее.'],
+  'ask_weather': ['Я не могу посмотреть в окно, но надеюсь, у тебя солнечно!', 'Чтобы узнать точный прогноз, лучше воспользоваться специальным сервисом.'],
   'default': ['Интересная мысль.', 'Я не совсем понял, можешь перефразировать?', 'Хм, надо подумать.', 'Давай сменим тему?']
 };
 
+function determineIntent(userInput: string): string {
+    let bestIntent = 'default';
+    let maxScore = 0;
 
+    for (const intent in intents) {
+        let currentScore = 0;
+        for (const keyword of intents[intent]) {
+            // Check for whole phrase match first for higher accuracy
+            if (userInput.includes(keyword)) {
+                 // Longer keywords are more specific, give them more weight
+                currentScore += keyword.length;
+            }
+        }
+        if (currentScore > maxScore) {
+            maxScore = currentScore;
+            bestIntent = intent;
+        }
+    }
+    // Set a minimum threshold to avoid false positives on very short inputs
+    if (maxScore < 4 && userInput.split(' ').length < 3) {
+        return 'default';
+    }
+
+    return bestIntent;
+}
 
 const markovChains: {[key: string]: string[]} = {
-  // N-grams (trigrams)
-  // key is "word1 word2", value is ["word3", "word4"]
   '__start__': ['я', 'ты', 'привет', 'здравствуй', 'как', 'что', 'это', 'мне', 'у', 'сегодня', 'ну', 'вот', 'кстати', 'почему'],
   '__end__': ['.', '?', '!', '...'],
-  
   'привет как': ['дела', 'ты', 'настроение'],
   'здравствуй как': ['дела', 'ты'],
   'как твои': ['дела', 'успехи'],
@@ -241,8 +205,6 @@ const markovChains: {[key: string]: string[]} = {
   'машинное обучение': ['это', 'используется', 'помогает'],
   'цепи маркова': ['это', 'позволяют', 'работают'],
   'база данных': ['хранит', 'содержит', 'это'],
-  
-  // Bigrams (fallback)
   'привет': ['я', 'ты', 'как', 'что'],
   'здравствуй': ['как', 'что', 'рад'],
   'я': ['думаю', 'говорю', 'знаю', 'хочу', 'могу', 'работаю', 'учусь', 'программист', 'бот', 'неплохо', 'стараюсь', 'в порядке', 'не'],
@@ -290,7 +252,6 @@ const markovChains: {[key: string]: string[]} = {
 function findBestStartingWords(userInput: string): string[] | null {
     const words = userInput.toLowerCase().replace(/[.,?]/g, '').split(/\s+/).filter(Boolean);
     
-    // Try to find a trigram match first
     for (let i = 0; i < words.length - 1; i++) {
         const bigram = `${words[i]} ${words[i+1]}`;
         if (markovChains[bigram]) {
@@ -298,12 +259,10 @@ function findBestStartingWords(userInput: string): string[] | null {
         }
     }
     
-    // Fallback to bigram (single word) match
     const knownWords = words.filter(word => markovChains[word]);
     if (knownWords.length > 0) {
-        // Return the *last* known word to make the response more relevant to the end of the user's sentence
         const lastKnownWord = knownWords[knownWords.length - 1];
-        return ['__start__', lastKnownWord];
+        return [lastKnownWord];
     }
 
     return null;
@@ -318,62 +277,49 @@ function generateResponseFromMarkov(userInput: string): string {
     .map(word => correctSpelling(word, vocabulary))
     .join(' ');
   
-  const startingPair = findBestStartingWords(correctedInput);
+  const startingWords = findBestStartingWords(correctedInput);
   
-  if (!startingPair) {
-      const defaultResponses = cannedResponses['default'];
-      return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
-  }
+  let response: string[];
 
-  let [word1, word2] = startingPair;
-  
-  if (word1 === '__start__' && word2 === '__start__') {
+  if (!startingWords) {
       const startWords = markovChains['__start__'];
-      word2 = startWords[Math.floor(Math.random() * startWords.length)];
+      response = [startWords[Math.floor(Math.random() * startWords.length)]];
+  } else {
+      response = [...startingWords];
   }
 
-  let response = word1 === '__start__' ? [word2] : [word1, word2];
-  const isShortAnswer = correctedInput.split(/\s+/).length <= 2;
-  const sentenceLength = isShortAnswer ? (Math.floor(Math.random() * 4) + 2) : (Math.floor(Math.random() * 8) + 6); // 2-5 words for short, 6-13 for long
 
-  for (let i = 0; i < sentenceLength; i++) {
+  const isShortAnswer = correctedInput.split(/\s+/).length <= 2;
+  const sentenceLength = isShortAnswer ? (Math.floor(Math.random() * 4) + 3) : (Math.floor(Math.random() * 8) + 6);
+
+  for (let i = response.length; i < sentenceLength; i++) {
     const lastTwoWords = response.slice(-2).join(' ');
     const lastWord = response[response.length - 1];
     
-    // Prioritize Trigrams (N-grams of order 3)
     let possibleNextWords = markovChains[lastTwoWords];
     
-    // Fallback to Bigrams (N-grams of order 2)
     if (!possibleNextWords) {
         possibleNextWords = markovChains[lastWord];
     }
 
-    // If no chain found, stop to avoid nonsensical jumps
     if (!possibleNextWords || possibleNextWords.length === 0) {
         break; 
     }
     
     let nextWord = possibleNextWords[Math.floor(Math.random() * possibleNextWords.length)];
     
-    // Avoid immediate repetition of words
     if (lastWord === nextWord) {
-        // try once more
         nextWord = possibleNextWords[Math.floor(Math.random() * possibleNextWords.length)];
-        if (lastWord === nextWord) break; // If it's still the same, just end the sentence.
+        if (lastWord === nextWord) break; 
     }
     
     response.push(nextWord);
     
-    // Break if we hit a word with no chain to follow from now on.
     if (!markovChains[response.slice(-2).join(' ')] && !markovChains[nextWord]) {
         break;
     }
   }
   
-  if(response[0] === '__start__') {
-      response = response.slice(1);
-  }
-
   if (response.length < 2) {
       const defaultResponses = cannedResponses['default'];
       return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
@@ -392,7 +338,6 @@ function generateResponseFromMarkov(userInput: string): string {
 }
 
 function generateResponse(userInput: string): string {
-  // Correct typos in the user input first
   const correctedInput = userInput
     .toLowerCase()
     .replace(/[.,!?]/g, '')
@@ -400,18 +345,13 @@ function generateResponse(userInput: string): string {
     .map(word => correctSpelling(word, vocabulary))
     .join(' ');
 
-  // Prioritize checking for full phrase matches in canned responses
-  for (const phrase in cannedResponses) {
-    if (phrase === 'default') continue;
-    
-    const regex = new RegExp(`\\b${phrase}\\b`);
-    if (regex.test(correctedInput)) {
-      const possibleResponses = cannedResponses[phrase];
+  const intent = determineIntent(correctedInput);
+
+  if (intent !== 'default' && cannedResponses[intent]) {
+      const possibleResponses = cannedResponses[intent];
       return possibleResponses[Math.floor(Math.random() * possibleResponses.length)];
-    }
   }
 
-  // If no direct match, fall back to creative generation
   return generateResponseFromMarkov(userInput);
 }
 
