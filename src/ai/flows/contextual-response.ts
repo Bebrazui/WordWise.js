@@ -113,7 +113,7 @@ const sessionMemory = {
 function lemmatize(word: string): string {
     word = word.toLowerCase();
     // 1. Check if the word is already a known base form or a direct synonym key.
-    if(syn[word] || wc[word] || kb[word]) return word;
+    if(syn[word] || wc[word] || kb[word] || lw[word as keyof typeof lw]) return word;
     
     // 2. Check if the word is a known synonym form of a base word.
     for(const key in syn){
@@ -130,7 +130,9 @@ function lemmatize(word: string): string {
             if (syn[base + 'ый'] || Object.values(syn).flat().includes(base + 'ый')) return base + 'ый';
             // A common case: "хорошее" -> "хорош" -> "хорошо" (adverb)
             if (syn[base + 'о']) return base + 'о';
-            // Default to a plausible base form if others fail
+             // Default to a plausible base form if others fail
+            if (syn[base + 'ий'] || wc[base + 'ий']) return base + 'ий';
+            if (syn[base + 'ый'] || wc[base + 'ый']) return base + 'ый';
             return base + 'ий';
         }
     }
@@ -152,8 +154,8 @@ function lemmatize(word: string): string {
     for (const ending of verbEndings) {
         if(word.endsWith(ending)) {
             let base = word.slice(0, -ending.length);
-            if(syn[base + 'ть'] || wc[base + 'ть']) return base + 'ть';
-            if(syn[base + 'ти'] || wc[base + 'ти']) return base + 'ти';
+            if(syn[base + 'ть'] || wc[base + 'ть'] || lw[base + 'ть' as keyof typeof lw]) return base + 'ть';
+            if(syn[base + 'ти'] || wc[base + 'ти'] || lw[base + 'ти' as keyof typeof lw]) return base + 'ти';
         }
     }
 
@@ -532,6 +534,7 @@ function getFallbackResponse(normalizedInput: string): string {
     const thoughtfulResponses = [
         `Я размышляю над словом "${unknownWord}"... и что оно может означать в этом контексте. Можешь объяснить? Например: ${unknownWord} - это...`,
         'Это сложный вопрос. Мои алгоритмы ищут наиболее подходящий ответ, но пока безуспешно. Попробуешь перефразировать?',
+        `Хм, слово "${unknownWord}" поставило меня в тупик. Не мог бы ты его пояснить?`,
     ];
     let responses = thoughtfulResponses;
     const lastResponse = lastResponseMap.get('fallback');
@@ -669,9 +672,10 @@ async function generateCreativeResponse(
   }
   
   // (Bonus Stage): Check persistent learned words
-  const learnedMeaning = lw[normalizedInput as keyof typeof lw];
+  const learnedMeaning = lw[normalizedInput as keyof typeof lw] || lw[lemmatize(normalizedInput) as keyof typeof lw];
   if (learnedMeaning) {
-    return `Я помню, ты говорил, что ${normalizedInput} - это ${learnedMeaning}. Хочешь поговорить об этом?`;
+    const lemmatizedWord = lemmatize(normalizedInput);
+    return `Я помню, ты говорил, что ${lemmatizedWord} - это ${learnedMeaning}. Хочешь поговорить об этом?`;
   }
 
   // Stage 7: Observer & Smart Fallback
