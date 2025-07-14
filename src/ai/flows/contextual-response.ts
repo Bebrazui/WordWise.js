@@ -237,7 +237,7 @@ function levenshteinDistance(a: string, b: string): number {
 }
 
 const personalPronounMarkers = ["я", "у меня", "мой", "мне", "я сам"];
-const questionAboutWellbeing = ["как дела", "как ты", "как поживаешь", "как твое"];
+const questionAboutWellbeing = ["как дела", "как ты", "как поживаешь", "как твое", "как сам"];
 
 /**
  * Checks if the user is likely responding to a question about their well-being.
@@ -291,7 +291,7 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
       
       const distance = levenshteinDistance(lowerCaseInput, lowerPhrase);
       // More forgiving for longer phrases
-      const threshold = Math.floor(lowerPhrase.length / 4); 
+      const threshold = Math.floor(lowerPhrase.length / 3); // More forgiving threshold
       if (distance <= threshold) {
           const score = 1 - (distance / lowerPhrase.length);
           if (score > (bestMatch?.score ?? 0)) {
@@ -300,6 +300,15 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
       }
     }
   }
+  
+  // A special check for wellbeing questions directed at the bot.
+  if (!bestMatch || bestMatch.score < 0.75) {
+      const isAskingAboutBot = questionAboutWellbeing.some(q => lowerCaseInput.includes(q.split(' ')[0]));
+      if(isAskingAboutBot) {
+          bestMatch = { intent: 'как_дела', score: 0.9 };
+      }
+  }
+
 
   // If a reasonably good match is found, use it. This makes the bot feel responsive to direct questions.
   if (bestMatch && bestMatch.score > 0.7) {

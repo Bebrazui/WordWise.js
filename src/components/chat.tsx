@@ -36,7 +36,7 @@ const initialMessage: Message = {
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([initialMessage]);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeModel, setActiveModel] = useState<ModelType>('R');
+  const [activeModel, setActiveModel] = useState<ModelType>('Q');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
