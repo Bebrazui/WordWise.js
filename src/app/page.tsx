@@ -64,7 +64,7 @@ export default function Home() {
 
     for (let i = 0; i < numWords; i++) {
       const inputTensor = new Tensor([wordToIndex.get(currentInputWord) || 0], [1]);
-      const { outputLogits, h: nextH, c: nextC } = trainedModel.forwardStep(inputTensor, h, c);
+      const { outputLogits, h: nextH, c: nextC } = trainedModel.forward(inputTensor, h, c);
       h = nextH;
       c = nextC;
 
