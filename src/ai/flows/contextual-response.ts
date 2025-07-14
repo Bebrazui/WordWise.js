@@ -285,10 +285,10 @@ function handleDirectResponse(normalizedInput: string, history: string[]): strin
 
 // --- Pipeline Stage 4: Contextual Analyzer ---
 const questionAboutWellbeing = [
-  'как дела', 'как ты', 'как поживаешь', 'как твое', 'как сам', 'как настроение', 'что нового', 'как самочувствие',
+  'как дела', 'как ты', 'как поживаешь', 'как твое', 'как сам', 'как настроение', 'что нового', 'как самочувствие', 'как твои дела'
 ];
 const positiveUserStates = [
-  'хорошо', 'нормально', 'отлично', 'замечательно', 'прекрасно', 'порядок', 'ничего', 'пойдет', 'хороший'
+  'хорошо', 'нормально', 'отлично', 'замечательно', 'прекрасно', 'порядок', 'ничего', 'пойдет', 'хороший', 'у меня все хорошо', 'все хорошо', 'все отлично', 'все прекрасно'
 ];
 
 /**
@@ -303,12 +303,11 @@ function handleWellbeingResponse(normalizedInput: string, history: string[]): st
     const lastBotMessage = history[history.length - 1].toLowerCase();
     const wasAsked = questionAboutWellbeing.some(q => lastBotMessage.includes(lemmatize(q)));
     if (!wasAsked) return null;
-
-    const inputWords = normalizedInput.split(' ');
-    const isDirectAnswer = positiveUserStates.some(state => inputWords.includes(lemmatize(state)));
-    const isPersonal = ['я', 'у меня'].some(marker => normalizedInput.startsWith(marker));
     
-    if (isDirectAnswer || isPersonal) {
+    // Check if the user's response is one of the positive states.
+    const isPositiveResponse = positiveUserStates.some(state => normalizedInput.includes(state));
+
+    if (isPositiveResponse) {
         const suitableResponses = [
             'Рад это слышать!', 'Отлично! Чем теперь займемся?', 'Здорово! Если что-то понадобится, я здесь.', 'Это хорошо. Что дальше по плану?',
         ];
