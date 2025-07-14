@@ -340,8 +340,8 @@ export default function WordwisePage() {
             <CardContent>
                 <Tabs defaultValue="text" className="w-full">
                     <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger value="text"><FileText className="w-4 h-4 mr-2"/>Текст</TabsTrigger>
-                        <TabsTrigger value="image" disabled><ImagePlus className="w-4 h-4 mr-2"/>Изображения (скоро)</TabsTrigger>
+                        <TabsTrigger value="text" onClick={() => setTrainingData({ type: 'text', corpus: defaultCorpus })}><FileText className="w-4 h-4 mr-2"/>Текст</TabsTrigger>
+                        <TabsTrigger value="image" onClick={() => setTrainingData({ type: 'image', items: [] })}><ImagePlus className="w-4 h-4 mr-2"/>Изображения</TabsTrigger>
                     </TabsList>
                     <TabsContent value="text" className="mt-4">
                         <Label htmlFor="corpus">Ваш обучающий корпус:</Label>
@@ -377,9 +377,9 @@ export default function WordwisePage() {
                                 <p className="text-sm font-medium">Загружено {trainingData.items.length} изображений:</p>
                                 <div className="grid grid-cols-3 gap-2 mt-2 max-h-48 overflow-y-auto">
                                     {trainingData.items.map((item, index) => (
-                                        <div key={index} className="relative">
+                                        <div key={index} className="relative group">
                                             <img src={item.dataUrl} alt={item.label} className="rounded-md object-cover aspect-square" />
-                                            <p className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs text-center p-0.5 truncate">{item.label}</p>
+                                            <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs text-center p-0.5 truncate">{item.label}</div>
                                         </div>
                                     ))}
                                 </div>
@@ -551,5 +551,3 @@ export default function WordwisePage() {
     </div>
   );
 }
-
-    
