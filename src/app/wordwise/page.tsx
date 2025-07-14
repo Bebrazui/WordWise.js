@@ -14,6 +14,10 @@ import { buildVocabulary, wordsToInputTensors, wordsToTargetTensors, getWordFrom
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+
+import { useTrainedModel } from '@/hooks/use-trained-model';
 
 
 export default function WordwisePage() {
@@ -23,7 +27,10 @@ export default function WordwisePage() {
   const [isTraining, setIsTraining] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
-
+  const [textCorpus, setTextCorpus] = useState("the cat sat on the mat. the dog ran fast. cat and dog are pets and friends. a cat and a dog play together. and the cat loves the dog.");
+  
+  const { setTrainedModel, setVocabData } = useTrainedModel();
+  
   const modelRef = useRef<WordWiseModel | null>(null);
   const optimizerRef = useRef<SGD | null>(null);
   const vocabDataRef = useRef<{ vocab: string[]; wordToIndex: Map<string, number>; indexToWord: Map<number, string>; vocabSize: number } | null>(null);
@@ -35,19 +42,19 @@ export default function WordwisePage() {
   const learningRate = 0.01;
   const numEpochs = 500;
 
-  const textCorpus = "the cat sat on the mat. the dog ran fast. cat and dog are pets and friends. a cat and a dog play together. and the cat loves the dog.";
-
-  const initializeWordWise = (textData: string) => {
+  const initializeWordWise = () => {
     try {
       setStatus('Инициализация WordWise.js...');
-      const { vocab, wordToIndex, indexToWord, vocabSize } = buildVocabulary(textData);
+      const { vocab, wordToIndex, indexToWord, vocabSize } = buildVocabulary(textCorpus);
       vocabDataRef.current = { vocab, wordToIndex, indexToWord, vocabSize };
 
       modelRef.current = new WordWiseModel(vocabSize, embeddingDim, hiddenSize);
       optimizerRef.current = new SGD(learningRate);
+      
+      setVocabData({ vocab, wordToIndex, indexToWord, vocabSize });
 
       setLossHistory([]);
-      setOutput('WordWise.js инициализирован. Словарь создан.');
+      setOutput('WordWise.js инициализирован. Словарь создан. Готов к обучению.');
       console.log('Словарь:', vocab);
       setStatus('Готов к обучению.');
       setIsInitialized(true);
@@ -93,8 +100,8 @@ export default function WordwisePage() {
 
       for (const batch of batches) {
         const { outputLogits: predictionLogits, h: nextH, c: nextC } = model.forwardStep(batch.inputs, h, c);
-        h = nextH;
-        c = nextC;
+        h = nextH.detach();
+        c = nextC.detach();
 
         const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batch.targets);
         epochLoss += lossTensor.data[0];
@@ -109,12 +116,13 @@ export default function WordwisePage() {
         setLossHistory([...newLossHistory]);
         setStatus(`Обучение: Эпоха ${epoch + 1}/${numEpochs}, Потеря: ${avgEpochLoss.toFixed(6)}`);
         setTrainingProgress(((epoch + 1) / numEpochs) * 100);
-        await new Promise(resolve => setTimeout(resolve, 0)); // Allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 0)); 
       }
     }
     
-    setStatus('Обучение завершено.');
-    setOutput('Обучение WordWise.js завершено. Теперь можно генерировать текст!');
+    setTrainedModel(model); // Сохраняем обученную модель в глобальном состоянии
+    setStatus('Обучение завершено. Модель готова к использованию в чате!');
+    setOutput('Обучение WordWise.js завершено. Теперь можно вернуться в чат и пообщаться с обученной моделью!');
     setIsTraining(false);
   };
 
@@ -168,23 +176,41 @@ export default function WordwisePage() {
       </div>
       
       <header className="text-center mb-8">
-        <h1 className="text-4xl font-bold text-gray-800">WordWise.js</h1>
-        <p className="text-lg text-muted-foreground mt-2">Ваш ИИ-конструктор для обучения в браузере</p>
+        <h1 className="text-4xl font-bold text-gray-800">Тренажерный Зал WordWise.js</h1>
+        <p className="text-lg text-muted-foreground mt-2">Здесь вы можете обучить свою собственную языковую модель</p>
       </header>
       
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="md:col-span-1 space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        <div className="lg:col-span-2 space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Управление</CardTitle>
-              <CardDescription>Инициализация и запуск обучения модели</CardDescription>
+              <CardTitle>Шаг 1: Подготовьте данные</CardTitle>
+              <CardDescription>Введите текст на английском языке, на котором будет учиться модель. Чем больше текста, тем лучше результат.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Label htmlFor="corpus">Ваш обучающий корпус:</Label>
+              <Textarea
+                id="corpus"
+                value={textCorpus}
+                onChange={(e) => setTextCorpus(e.target.value)}
+                placeholder="The quick brown fox jumps over the lazy dog..."
+                className="min-h-[150px] mt-2"
+                disabled={isTraining || isInitialized}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Шаг 2: Обучите модель</CardTitle>
+              <CardDescription>Инициализируйте модель, а затем запустите процесс обучения. После этого модель можно будет использовать в чате.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Button onClick={() => initializeWordWise(textCorpus)} disabled={isInitialized || isTraining} className="w-full">
-                1. Инициализировать
+              <Button onClick={initializeWordWise} disabled={isInitialized || isTraining} className="w-full">
+                Инициализировать
               </Button>
               <Button onClick={trainWordWise} disabled={!isInitialized || isTraining} className="w-full">
-                {isTraining ? 'Обучение...' : '2. Начать обучение'}
+                {isTraining ? 'Обучение...' : 'Начать обучение'}
               </Button>
                {isTraining && <Progress value={trainingProgress} className="w-full" />}
               <p className="text-sm text-center text-muted-foreground pt-2">Статус: {status}</p>
@@ -193,11 +219,11 @@ export default function WordwisePage() {
 
            <Card>
             <CardHeader>
-              <CardTitle>Генерация текста</CardTitle>
-               <CardDescription>Создайте текст на основе обученной модели</CardDescription>
+              <CardTitle>Шаг 3: Проверьте генерацию</CardTitle>
+               <CardDescription>Здесь можно быстро проверить, как модель генерирует текст.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                 <div className="grid grid-cols-2 gap-2">
                      <Button variant="outline" onClick={() => generateText("the", 10)} disabled={isTraining || !isInitialized}>the...</Button>
                      <Button variant="outline" onClick={() => generateText("cat", 10)} disabled={isTraining || !isInitialized}>cat...</Button>
                      <Button variant="outline" onClick={() => generateText("dog", 10)} disabled={isTraining || !isInitialized}>dog...</Button>
@@ -210,7 +236,7 @@ export default function WordwisePage() {
           </Card>
         </div>
 
-        <div className="md:col-span-2">
+        <div className="lg:col-span-3">
             <Card className="h-full">
                 <CardHeader>
                     <CardTitle>График потерь (Loss)</CardTitle>
@@ -243,21 +269,6 @@ export default function WordwisePage() {
             </Card>
         </div>
       </div>
-      
-      <Card className="mt-8">
-         <CardHeader>
-            <CardTitle>Как это работает?</CardTitle>
-         </CardHeader>
-         <CardContent className="prose prose-sm max-w-none text-gray-600">
-             <p>Эта страница — ваш личный "тренажерный зал" для маленькой нейронной сети, написанной на чистом TypeScript с помощью вашего фреймворка <strong>WordWise.js</strong>.</p>
-             <ol>
-                 <li><strong>Инициализация:</strong> Мы создаем словарь из простого текстового корпуса: <code>"{textCorpus.substring(0, 50)}..."</code>. Затем создается модель, готовая к обучению.</li>
-                 <li><strong>Обучение:</strong> Модель снова и снова "читает" корпус, пытаясь предсказать каждое следующее слово. После каждой попытки она вычисляет свою ошибку (<strong>потерю</strong>) и корректирует свои внутренние параметры, чтобы в следующий раз ошибиться меньше.</li>
-                 <li><strong>Генерация:</strong> После обучения модель может, получив стартовое слово, генерировать продолжение текста, основываясь на тех закономерностях, которые она выучила.</li>
-             </ol>
-             <p>Это упрощенная, но фундаментальная демонстрация того, как работают большие языковые модели. Вы можете изменять параметры в коде и наблюдать, как это влияет на обучение и результат!</p>
-         </CardContent>
-      </Card>
     </div>
   );
 }

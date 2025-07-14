@@ -1,3 +1,4 @@
+
 // src/lib/tensor.ts
 
 /**
@@ -13,6 +14,8 @@ export class Tensor {
   // Список "родительских" тензоров и функций, которые вычисляют
   // локальный градиент по отношению к этому родителю (для autograd)
   _parents: { tensor: Tensor, gradFn: (grad: Tensor) => Tensor }[] = [];
+  
+  _isDetached: boolean = false; // Флаг для отсоединения от графа вычислений
 
   /**
    * Создает новый экземпляр Tensor.
@@ -27,6 +30,19 @@ export class Tensor {
     this.data = data instanceof Float32Array ? data : new Float32Array(data);
     this.shape = shape;
   }
+  
+  /**
+   * Создает новый тензор с теми же данными, но отсоединенный от графа вычислений.
+   * Это предотвращает распространение градиентов через этот тензор.
+   * Используется для скрытых состояний в RNN, чтобы разорвать граф между шагами.
+   * @returns Новый отсоединенный Tensor.
+   */
+  detach(): Tensor {
+    const detachedTensor = new Tensor(this.data, this.shape);
+    detachedTensor._isDetached = true;
+    return detachedTensor;
+  }
+
 
   /**
    * Удобный статический метод для создания тензора,
@@ -85,62 +101,62 @@ export class Tensor {
    * @returns Новый Tensor с результатом сложения.
    */
     add(other: Tensor): Tensor {
+        const result = new Tensor(new Float32Array(this.data), this.shape);
+
         // Handle scalar broadcasting
         if (other.size === 1) {
-            const resultData = new Float32Array(this.size);
-            for (let i = 0; i < this.size; i++) {
-                resultData[i] = this.data[i] + other.data[0];
+            for (let i = 0; i < result.size; i++) {
+                result.data[i] += other.data[0];
             }
-            const result = new Tensor(resultData, this.shape);
-            result._parents.push(
-                { tensor: this, gradFn: (grad) => grad },
-                { tensor: other, gradFn: (grad) => new Tensor([grad.data.reduce((a, b) => a + b, 0)], [1]) }
-            );
-            return result;
         }
-
         // Handle broadcasting of a row vector [1, N] to a matrix [M, N]
-        if (this.shape.length === 2 && other.shape.length === 2 && this.shape[0] > 1 && other.shape[0] === 1 && this.shape[1] === other.shape[1]) {
-            const resultData = new Float32Array(this.size);
+        else if (this.shape.length === 2 && other.shape.length === 2 && this.shape[0] > 1 && other.shape[0] === 1 && this.shape[1] === other.shape[1]) {
             const numRows = this.shape[0];
             const numCols = this.shape[1];
             for (let i = 0; i < numRows; i++) {
                 for (let j = 0; j < numCols; j++) {
-                    resultData[i * numCols + j] = this.data[i * numCols + j] + other.data[j];
+                    result.data[i * numCols + j] += other.data[j];
                 }
             }
-            const result = new Tensor(resultData, this.shape);
+        } else { // Element-wise addition
+            if (!this.shape.every((dim, i) => dim === other.shape[i])) {
+                 throw new Error(`Tensors must have compatible shapes for addition (broadcasting not fully supported): [${this.shape}] vs [${other.shape}]`);
+            }
+            for (let i = 0; i < result.size; i++) {
+                result.data[i] += other.data[i];
+            }
+        }
+
+        // --- Autograd ---
+        if (!this._isDetached && !other._isDetached) {
             result._parents.push(
-                { tensor: this, gradFn: (grad) => grad },
+                {
+                    tensor: this,
+                    gradFn: (grad) => grad
+                },
                 {
                     tensor: other,
                     gradFn: (grad) => {
-                        const biasGradData = new Float32Array(other.size).fill(0);
-                        for (let i = 0; i < numRows; i++) {
-                            for (let j = 0; j < numCols; j++) {
-                                biasGradData[j] += grad.data[i * numCols + j];
-                            }
+                        if (other.size === 1) { // Gradient for scalar
+                            return new Tensor([grad.data.reduce((a, b) => a + b, 0)], [1]);
                         }
-                        return new Tensor(biasGradData, other.shape);
+                        if (other.shape.length === 2 && other.shape[0] === 1) { // Gradient for row vector
+                            const biasGradData = new Float32Array(other.size).fill(0);
+                            const numRows = grad.shape[0];
+                            const numCols = grad.shape[1];
+                            for (let i = 0; i < numRows; i++) {
+                                for (let j = 0; j < numCols; j++) {
+                                    biasGradData[j] += grad.data[i * numCols + j];
+                                }
+                            }
+                            return new Tensor(biasGradData, other.shape);
+                        }
+                        return grad; // Gradient for element-wise
                     }
                 }
             );
-            return result;
         }
 
-        if (!this.shape.every((dim, i) => dim === other.shape[i])) {
-            throw new Error(`Tensors must have compatible shapes for addition (broadcasting not fully supported): [${this.shape}] vs [${other.shape}]`);
-        }
-
-        const resultData = new Float32Array(this.size);
-        for (let i = 0; i < this.size; i++) {
-            resultData[i] = this.data[i] + other.data[i];
-        }
-        const result = new Tensor(resultData, this.shape);
-        result._parents.push(
-            { tensor: this, gradFn: (grad) => grad },
-            { tensor: other, gradFn: (grad) => grad }
-        );
         return result;
     }
 
@@ -158,10 +174,12 @@ export class Tensor {
       resultData[i] = this.data[i] - other.data[i];
     }
     const result = new Tensor(resultData, this.shape);
-    result._parents.push(
-      { tensor: this, gradFn: (grad) => grad },
-      { tensor: other, gradFn: (grad) => new Tensor(grad.data.map(g => -g), grad.shape) }
-    );
+    if (!this._isDetached && !other._isDetached) {
+      result._parents.push(
+        { tensor: this, gradFn: (grad) => grad },
+        { tensor: other, gradFn: (grad) => new Tensor(grad.data.map(g => -g), grad.shape) }
+      );
+    }
     return result;
   }
 
@@ -176,19 +194,23 @@ export class Tensor {
       const resultData = new Float32Array(other.size);
       for (let i = 0; i < other.size; i++) resultData[i] = this.data[0] * other.data[i];
       const result = new Tensor(resultData, other.shape);
-      result._parents.push(
-        { tensor: this, gradFn: (grad) => new Tensor([grad.data.reduce((sum, val, idx) => sum + val * other.data[idx], 0)], [1]) },
-        { tensor: other, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * this.data[0]), grad.shape) }
-      );
+      if (!this._isDetached && !other._isDetached) {
+        result._parents.push(
+          { tensor: this, gradFn: (grad) => new Tensor([grad.data.reduce((sum, val, idx) => sum + val * other.data[idx], 0)], [1]) },
+          { tensor: other, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * this.data[0]), grad.shape) }
+        );
+      }
       return result;
     } else if (other.size === 1) {
       const resultData = new Float32Array(this.size);
       for (let i = 0; i < this.size; i++) resultData[i] = this.data[i] * other.data[0];
       const result = new Tensor(resultData, this.shape);
-      result._parents.push(
-        { tensor: this, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * other.data[0]), grad.shape) },
-        { tensor: other, gradFn: (grad) => new Tensor([grad.data.reduce((sum, val, idx) => sum + val * this.data[idx], 0)], [1]) }
-      );
+       if (!this._isDetached && !other._isDetached) {
+        result._parents.push(
+          { tensor: this, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * other.data[0]), grad.shape) },
+          { tensor: other, gradFn: (grad) => new Tensor([grad.data.reduce((sum, val, idx) => sum + val * this.data[idx], 0)], [1]) }
+        );
+      }
       return result;
     }
 
@@ -200,10 +222,12 @@ export class Tensor {
       resultData[i] = this.data[i] * other.data[i];
     }
     const result = new Tensor(resultData, this.shape);
-    result._parents.push(
-      { tensor: this, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * other.data[i]), grad.shape) },
-      { tensor: other, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * this.data[i]), grad.shape) }
-    );
+    if (!this._isDetached && !other._isDetached) {
+      result._parents.push(
+        { tensor: this, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * other.data[i]), grad.shape) },
+        { tensor: other, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * this.data[i]), grad.shape) }
+      );
+    }
     return result;
   }
 
@@ -239,17 +263,19 @@ export class Tensor {
 
     const result = new Tensor(resultData, resultShape);
 
-    // Правила для вычисления градиентов матричного умножения
-    result._parents.push(
-      {
-        tensor: this,
-        gradFn: (grad) => grad.dot(other.transpose())
-      },
-      {
-        tensor: other,
-        gradFn: (grad) => this.transpose().dot(grad)
-      }
-    );
+    if (!this._isDetached && !other._isDetached) {
+        // Правила для вычисления градиентов матричного умножения
+        result._parents.push(
+          {
+            tensor: this,
+            gradFn: (grad) => grad.dot(other.transpose())
+          },
+          {
+            tensor: other,
+            gradFn: (grad) => this.transpose().dot(grad)
+          }
+        );
+    }
     return result;
   }
 
@@ -286,10 +312,12 @@ export class Tensor {
       resultData[i] = fn(this.data[i]);
     }
     const result = new Tensor(resultData, this.shape);
-    result._parents.push({
-      tensor: this,
-      gradFn: (grad) => new Tensor(grad.data.map((g, i) => gradFn(this.data[i], resultData[i], g)), grad.shape)
-    });
+    if (!this._isDetached) {
+        result._parents.push({
+          tensor: this,
+          gradFn: (grad) => new Tensor(grad.data.map((g, i) => gradFn(this.data[i], resultData[i], g)), grad.shape)
+        });
+    }
     return result;
   }
 
@@ -316,11 +344,13 @@ export class Tensor {
   sum(): Tensor {
     const sumVal = this.data.reduce((acc, val) => acc + val, 0);
     const result = new Tensor([sumVal], [1]);
-    result._parents.push({
-      tensor: this,
-      // Градиент суммы - это единица для каждого элемента
-      gradFn: (grad) => new Tensor(new Float32Array(this.size).fill(grad.data[0]), this.shape)
-    });
+    if (!this._isDetached) {
+        result._parents.push({
+          tensor: this,
+          // Градиент суммы - это единица для каждого элемента
+          gradFn: (grad) => new Tensor(new Float32Array(this.size).fill(grad.data[0]), this.shape)
+        });
+    }
     return result;
   }
 
@@ -331,11 +361,13 @@ export class Tensor {
   mean(): Tensor {
     const meanVal = this.data.reduce((acc, val) => acc + val, 0) / this.size;
     const result = new Tensor([meanVal], [1]);
-    result._parents.push({
-      tensor: this,
-      // Градиент среднего - это 1/size для каждого элемента
-      gradFn: (grad) => new Tensor(new Float32Array(this.size).fill(grad.data[0] / this.size), this.shape)
-    });
+    if (!this._isDetached) {
+        result._parents.push({
+          tensor: this,
+          // Градиент среднего - это 1/size для каждого элемента
+          gradFn: (grad) => new Tensor(new Float32Array(this.size).fill(grad.data[0] / this.size), this.shape)
+        });
+    }
     return result;
   }
 
@@ -380,7 +412,7 @@ export class Tensor {
     const topoSort: Tensor[] = [];
 
     function buildTopo(node: Tensor) {
-      if (!visited.has(node)) {
+      if (!visited.has(node) && !node._isDetached) { // Не добавляем отсоединенные узлы в граф
         visited.add(node);
         node._parents.forEach(p => buildTopo(p.tensor));
         topoSort.push(node);
@@ -418,3 +450,4 @@ export class Tensor {
     return `Tensor(data=[${this.data.map(d => d.toFixed(4)).join(', ')}], shape=[${this.shape.join(', ')}])`;
   }
 }
+

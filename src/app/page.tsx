@@ -12,7 +12,11 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import Link from 'next/link';
 
-// Определяем тип сообщения прямо здесь
+import { useTrainedModel } from '@/hooks/use-trained-model';
+import { Tensor } from '@/lib/tensor';
+import { softmax } from '@/lib/layers';
+import { getWordFromPrediction } from '@/utils/tokenizer';
+
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -22,11 +26,11 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isExperimentalMode, setIsExperimentalMode] = useState(false);
+  const { trainedModel, vocabData } = useTrainedModel();
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-  const modelName = "WordWise.js Engine";
+  const modelName = trainedModel ? "WordWise.js (Обученная)" : "WordWise.js (Прототип)";
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -37,6 +41,37 @@ export default function Home() {
     }
   }, [messages]);
 
+  const generateTextWithModel = (startWord: string, numWords: number): string => {
+    if (!trainedModel || !vocabData) {
+      return "Модель не обучена. Перейдите на страницу обучения.";
+    }
+
+    const { wordToIndex, indexToWord } = vocabData;
+    let currentWord = startWord.toLowerCase().split(' ').pop() || '<unk>';
+
+    if (!wordToIndex.has(currentWord)) {
+        currentWord = '<unk>';
+    }
+
+    let generatedSequence = [currentWord];
+    let h = trainedModel.initializeStates(1).h0;
+    let c = trainedModel.initializeStates(1).c0;
+
+    for (let i = 0; i < numWords; i++) {
+      const inputTensor = new Tensor([wordToIndex.get(currentWord) || 0], [1]);
+      const { outputLogits, h: nextH, c: nextC } = trainedModel.forwardStep(inputTensor, h, c);
+      h = nextH;
+      c = nextC;
+
+      const predictionProbs = softmax(outputLogits);
+      currentWord = getWordFromPrediction(predictionProbs, indexToWord);
+      generatedSequence.push(currentWord);
+
+      if (currentWord === '<unk>') break;
+    }
+    return generatedSequence.join(' ');
+  };
+
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -44,18 +79,28 @@ export default function Home() {
 
     const userMessage: ChatMessage = { role: 'user', content: input };
     setMessages(prev => [...prev, userMessage]);
+    const currentInput = input;
     setInput('');
     setIsLoading(true);
 
     // Имитация ответа от локальной модели
     setTimeout(() => {
+        let botResponseContent: string;
+        if (trainedModel && vocabData) {
+            // Если модель обучена, генерируем ответ
+            botResponseContent = generateTextWithModel(currentInput, 15);
+        } else {
+            // Если модель не обучена, даем шаблонный ответ
+            botResponseContent = `Я прототип. Модель WordWise.js еще не обучена. Перейдите в раздел обучения, чтобы научить меня отвечать.`;
+        }
+
         const botResponse: ChatMessage = {
             role: 'assistant',
-            content: `Я локальная модель и получил ваше сообщение: "${userMessage.content}". Моя логика ответа пока не подключена к этому интерфейсу.`
+            content: botResponseContent
         };
         setMessages(prev => [...prev, botResponse]);
         setIsLoading(false);
-    }, 1000);
+    }, 500);
   };
 
   return (
@@ -66,7 +111,7 @@ export default function Home() {
             <Bot className="w-8 h-8 text-primary" />
             <div>
               <CardTitle className="text-lg">{modelName}</CardTitle>
-              <p className="text-xs text-muted-foreground">Прототип ИИ-ассистента</p>
+              <p className="text-xs text-muted-foreground">ИИ-ассистент на базе WordWise.js</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -75,38 +120,17 @@ export default function Home() {
                 <BrainCircuit className="w-5 h-5" />
               </Button>
             </Link>
-            <Sheet>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Настройки">
-                  <Settings className="w-5 h-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent>
-                <SheetHeader>
-                  <SheetTitle>Настройки</SheetTitle>
-                </SheetHeader>
-                <div className="py-4">
-                  <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
-                    <div className="space-y-0.5">
-                      <Label>Генеративный режим</Label>
-                      <p className="text-[0.8rem] text-muted-foreground">
-                        Включает ИИ-генерацию ответов вместо шаблонных. (Пока не активно)
-                      </p>
-                    </div>
-                    <Switch
-                      checked={isExperimentalMode}
-                      onCheckedChange={setIsExperimentalMode}
-                      disabled={true}
-                    />
-                  </div>
-                </div>
-              </SheetContent>
-            </Sheet>
           </div>
         </CardHeader>
         <CardContent className="flex-grow p-0">
           <ScrollArea className="h-full" ref={scrollAreaRef}>
              <div className="p-4 space-y-4">
+               {messages.length === 0 && (
+                 <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
+                    <p>Сообщений пока нет.</p>
+                    <p className="text-sm">Чтобы начать, отправьте сообщение или обучите модель в разделе <BrainCircuit className="inline h-4 w-4" />.</p>
+                 </div>
+               )}
               {messages.map((message, index) => (
                 <div key={index} className={`flex items-start gap-3 ${message.role === 'user' ? 'justify-end' : ''}`}>
                   {message.role === 'assistant' && (
