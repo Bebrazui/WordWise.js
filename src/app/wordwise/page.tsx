@@ -28,6 +28,7 @@ export default function WordwisePage() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [textCorpus, setTextCorpus] = useState("the cat sat on the mat. the dog ran fast. cat and dog are pets and friends. a cat and a dog play together. and the cat loves the dog.");
+  const [sampleWords, setSampleWords] = useState<string[]>([]);
   
   const { setTrainedModel, setVocabData } = useTrainedModel();
   
@@ -52,6 +53,11 @@ export default function WordwisePage() {
       optimizerRef.current = new SGD(learningRate);
       
       setVocabData({ vocab, wordToIndex, indexToWord, vocabSize });
+      
+      // Обновляем сэмплы слов для кнопок генерации
+      const wordsForSampling = vocab.filter(w => w !== '<unk>');
+      const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
+      setSampleWords(shuffled.slice(0, 4));
 
       setLossHistory([]);
       setOutput('WordWise.js инициализирован. Словарь создан. Готов к обучению.');
@@ -224,10 +230,20 @@ export default function WordwisePage() {
             </CardHeader>
             <CardContent className="space-y-4">
                  <div className="grid grid-cols-2 gap-2">
-                     <Button variant="outline" onClick={() => generateText("the", 10)} disabled={isTraining || !isInitialized}>the...</Button>
-                     <Button variant="outline" onClick={() => generateText("cat", 10)} disabled={isTraining || !isInitialized}>cat...</Button>
-                     <Button variant="outline" onClick={() => generateText("dog", 10)} disabled={isTraining || !isInitialized}>dog...</Button>
-                     <Button variant="outline" onClick={() => generateText("a", 10)} disabled={isTraining || !isInitialized}>a...</Button>
+                    {sampleWords.length > 0 ? (
+                      sampleWords.map(word => (
+                        <Button
+                          key={word}
+                          variant="outline"
+                          onClick={() => generateText(word, 10)}
+                          disabled={isTraining || !isInitialized}
+                        >
+                          {word}...
+                        </Button>
+                      ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground col-span-2 text-center">Инициализируйте модель, чтобы увидеть примеры.</p>
+                    )}
                  </div>
                  <div className="mt-4 p-4 bg-slate-100 rounded-md min-h-[100px] text-gray-700 font-mono text-sm">
                     {output || 'Результат генерации появится здесь...'}
