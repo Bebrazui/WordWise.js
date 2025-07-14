@@ -12,7 +12,7 @@ export class Tensor {
   grad: Tensor | null = null; // Градиент этого тензора по отношению к функции потерь
   // Список "родительских" тензоров и функций, которые вычисляют
   // локальный градиент по отношению к этому родителю (для autograd)
-  private _parents: { tensor: Tensor, gradFn: (grad: Tensor) => Tensor }[] = [];
+  _parents: { tensor: Tensor, gradFn: (grad: Tensor) => Tensor }[] = [];
 
   /**
    * Создает новый экземпляр Tensor.
@@ -80,47 +80,69 @@ export class Tensor {
   // --- Базовые арифметические операции ---
 
   /**
-   * Поэлементное сложение двух тензоров. Поддерживает простейший бродкастинг со скаляром.
+   * Поэлементное сложение двух тензоров. Поддерживает бродкастинг.
    * @param other Другой тензор.
    * @returns Новый Tensor с результатом сложения.
    */
-  add(other: Tensor): Tensor {
-    // Простой бродкастинг для скаляров
-    if (this.size === 1) {
-      const resultData = new Float32Array(other.size);
-      for (let i = 0; i < other.size; i++) resultData[i] = this.data[0] + other.data[i];
-      const result = new Tensor(resultData, other.shape);
-      result._parents.push(
-        { tensor: this, gradFn: (grad) => new Tensor([grad.data.reduce((sum, val) => sum + val, 0)], [1]) },
-        { tensor: other, gradFn: (grad) => grad }
-      );
-      return result;
-    } else if (other.size === 1) {
-      const resultData = new Float32Array(this.size);
-      for (let i = 0; i < this.size; i++) resultData[i] = this.data[i] + other.data[0];
-      const result = new Tensor(resultData, this.shape);
-      result._parents.push(
-        { tensor: this, gradFn: (grad) => grad },
-        { tensor: other, gradFn: (grad) => new Tensor([grad.data.reduce((sum, val) => sum + val, 0)], [1]) }
-      );
-      return result;
-    }
+    add(other: Tensor): Tensor {
+        // Handle scalar broadcasting
+        if (other.size === 1) {
+            const resultData = new Float32Array(this.size);
+            for (let i = 0; i < this.size; i++) {
+                resultData[i] = this.data[i] + other.data[0];
+            }
+            const result = new Tensor(resultData, this.shape);
+            result._parents.push(
+                { tensor: this, gradFn: (grad) => grad },
+                { tensor: other, gradFn: (grad) => new Tensor([grad.data.reduce((a, b) => a + b, 0)], [1]) }
+            );
+            return result;
+        }
 
-    if (!this.shape.every((dim, i) => dim === other.shape[i])) {
-      throw new Error(`Tensors must have compatible shapes for addition (broadcasting not fully supported): [${this.shape}] vs [${other.shape}]`);
-    }
+        // Handle broadcasting of a row vector [1, N] to a matrix [M, N]
+        if (this.shape.length === 2 && other.shape.length === 2 && this.shape[0] > 1 && other.shape[0] === 1 && this.shape[1] === other.shape[1]) {
+            const resultData = new Float32Array(this.size);
+            const numRows = this.shape[0];
+            const numCols = this.shape[1];
+            for (let i = 0; i < numRows; i++) {
+                for (let j = 0; j < numCols; j++) {
+                    resultData[i * numCols + j] = this.data[i * numCols + j] + other.data[j];
+                }
+            }
+            const result = new Tensor(resultData, this.shape);
+            result._parents.push(
+                { tensor: this, gradFn: (grad) => grad },
+                {
+                    tensor: other,
+                    gradFn: (grad) => {
+                        const biasGradData = new Float32Array(other.size).fill(0);
+                        for (let i = 0; i < numRows; i++) {
+                            for (let j = 0; j < numCols; j++) {
+                                biasGradData[j] += grad.data[i * numCols + j];
+                            }
+                        }
+                        return new Tensor(biasGradData, other.shape);
+                    }
+                }
+            );
+            return result;
+        }
 
-    const resultData = new Float32Array(this.size);
-    for (let i = 0; i < this.size; i++) {
-      resultData[i] = this.data[i] + other.data[i];
+        if (!this.shape.every((dim, i) => dim === other.shape[i])) {
+            throw new Error(`Tensors must have compatible shapes for addition (broadcasting not fully supported): [${this.shape}] vs [${other.shape}]`);
+        }
+
+        const resultData = new Float32Array(this.size);
+        for (let i = 0; i < this.size; i++) {
+            resultData[i] = this.data[i] + other.data[i];
+        }
+        const result = new Tensor(resultData, this.shape);
+        result._parents.push(
+            { tensor: this, gradFn: (grad) => grad },
+            { tensor: other, gradFn: (grad) => grad }
+        );
+        return result;
     }
-    const result = new Tensor(resultData, this.shape);
-    result._parents.push(
-      { tensor: this, gradFn: (grad) => grad },
-      { tensor: other, gradFn: (grad) => grad }
-    );
-    return result;
-  }
 
   /**
    * Поэлементное вычитание одного тензора из другого.
@@ -373,7 +395,7 @@ export class Tensor {
           continue; // Пропускаем узлы, которые не влияют на конечную потерю
       }
 
-      node._parents.forEach(p => {
+      for (const p of node._parents) {
         // Вычисляем градиент для родительского тензора, используя локальный gradFn
         const upstreamGrad = p.gradFn(node.grad!);
         if (p.tensor.grad === null) {
@@ -384,7 +406,7 @@ export class Tensor {
             p.tensor.grad.data[j] += upstreamGrad.data[j];
           }
         }
-      });
+      }
     }
   }
 
