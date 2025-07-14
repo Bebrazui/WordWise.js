@@ -92,13 +92,14 @@ function synonymize(sentence: string): string {
  * @returns A response string.
  */
 function generateRigidResponse(userInput: string, history: string[] = []): string {
-    const fullInput = [...history, userInput].join(' ');
-    const lowerCaseInput = fullInput.toLowerCase().replace(/[.,!?]/g, '');
+    const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
     const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
+    const fullContext = [...history, userInput].join(' ').toLowerCase().replace(/[.,!?]/g, '');
+    const wordsInContext = new Set(fullContext.split(/\s+/).filter(w => w));
 
     let bestMatch: { intent: string; score: number } | null = null;
 
-    // Calculate best match from knowledge base using Jaccard similarity
+    // Calculate best match from knowledge base using Jaccard similarity on the LATEST user input first
     for (const intent in kb) {
         if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
 
@@ -107,6 +108,7 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
             const lowerPhrase = phrase.toLowerCase();
             const phraseWords = new Set(lowerPhrase.split(/\s+/));
             
+            // Score against current input
             const intersection = new Set([...phraseWords].filter(x => wordsInInput.has(x)));
             const union = new Set([...phraseWords, ...wordsInInput]);
             const score = union.size > 0 ? intersection.size / union.size : 0;
@@ -138,8 +140,7 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
  * @returns A response string.
  */
 function generateCreativeResponse(userInput: string, history: string[] = []): string {
-    const fullInput = [...history, userInput].join(' ');
-    const lowerCaseInput = fullInput.toLowerCase().replace(/[.,!?]/g, '');
+    const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
     const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
 
     let bestMatch: { intent: string; score: number } | null = null;

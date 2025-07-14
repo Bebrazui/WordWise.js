@@ -27,14 +27,14 @@ const formSchema = z.object({
   message: z.string().min(1, "Message cannot be empty"),
 });
 
+const initialMessage: Message = {
+  id: 1,
+  text: "Привет! Я WordWise, ваш личный помощник. Выберите модель и давайте пообщаемся.",
+  sender: "ai",
+};
+
 export function Chat() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 1,
-      text: "Привет! Я WordWise, ваш личный помощник. Выберите модель и давайте пообщаемся.",
-      sender: "ai",
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([initialMessage]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeModel, setActiveModel] = useState<ModelType>('R');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -75,8 +75,11 @@ export function Chat() {
     setIsLoading(true);
 
     try {
-      // Get last 3 messages for context
-      const history = newMessages.slice(-4, -1).map(m => m.text);
+      // Get last 3 messages for context, excluding the initial one.
+      const history = newMessages
+        .filter(m => m.id !== initialMessage.id) // Exclude the initial greeting
+        .slice(-4, -1) // Get up to 3 previous messages (user + ai + user) before the current one
+        .map(m => m.text);
 
       await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
       
