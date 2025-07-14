@@ -19,6 +19,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Slider } from '@/components/ui/slider';
 
 import { useTrainedModel } from '@/hooks/use-trained-model';
 
@@ -35,7 +36,7 @@ export default function WordwisePage() {
   const [learningRate, setLearningRate] = useState(0.01);
   const [numEpochs, setNumEpochs] = useState(500);
 
-  const { setTrainedModel, setVocabData } = useTrainedModel();
+  const { setTrainedModel, setVocabData, temperature, setTemperature } = useTrainedModel();
   
   const modelRef = useRef<WordWiseModel | null>(null);
   const optimizerRef = useRef<SGD | null>(null);
@@ -178,8 +179,7 @@ export default function WordwisePage() {
       h = nextH;
       c = nextC;
 
-      const predictionProbs = softmax(predictionLogits);
-      currentWord = getWordFromPrediction(predictionProbs, indexToWord);
+      currentWord = getWordFromPrediction(predictionLogits, indexToWord, temperature);
       
       if (currentWord === 'вопрос' || currentWord === 'ответ') continue;
 
@@ -248,6 +248,22 @@ export default function WordwisePage() {
                     <Input id="lr" type="number" value={learningRate} onChange={e => setLearningRate(parseFloat(e.target.value))} step="0.001" min="0.0001" disabled={isTraining}/>
                  </div>
                </div>
+
+                <div>
+                    <Label htmlFor="temperature">Температура генерации: {temperature.toFixed(2)}</Label>
+                    <Slider
+                        id="temperature"
+                        min={0.1}
+                        max={2.0}
+                        step={0.05}
+                        value={[temperature]}
+                        onValueChange={(value) => setTemperature(value[0])}
+                        disabled={isTraining}
+                        className="mt-2"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">Низкая: более предсказуемый текст. Высокая: более случайный.</p>
+                </div>
+
 
               <Button onClick={initializeWordWise} disabled={isInitialized || isTraining} className="w-full">
                 Инициализировать / Сбросить
@@ -331,5 +347,3 @@ export default function WordwisePage() {
     </div>
   );
 }
-
-    

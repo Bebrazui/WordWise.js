@@ -22,7 +22,7 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { trainedModel, vocabData } = useTrainedModel();
+  const { trainedModel, vocabData, temperature } = useTrainedModel();
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
@@ -59,8 +59,7 @@ export default function Home() {
       h = nextH;
       c = nextC;
 
-      // Используем температурное сэмплирование, передавая сырые логиты
-      currentWord = getWordFromPrediction(outputLogits, indexToWord, 0.8);
+      currentWord = getWordFromPrediction(outputLogits, indexToWord, temperature);
       
       if (currentWord === 'вопрос' || currentWord === 'ответ') continue;
 
