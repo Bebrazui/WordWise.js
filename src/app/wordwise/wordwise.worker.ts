@@ -1,7 +1,8 @@
+
 // src/app/wordwise/wordwise.worker.ts
 /// <reference lib="webworker" />
 
-import { WordWiseModel } from '@/lib/model';
+import { WordWiseModel, serializeModel } from '@/lib/model';
 import { SGD } from '@/lib/optimizer';
 import { crossEntropyLossWithSoftmaxGrad } from '@/lib/layers';
 import { buildVocabulary, wordsToInputTensors, wordsToTargetTensors, createBatches, indexToOneHot } from '@/utils/tokenizer';
@@ -46,7 +47,8 @@ self.onmessage = async (event: MessageEvent) => {
 function initialize(payload: { textCorpus: string; embeddingDim: number; hiddenSize: number; learningRate: number }) {
   const { textCorpus, embeddingDim, hiddenSize, learningRate } = payload;
   
-  const words = textCorpus.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
+  // Используем регулярное выражение для токенизации, чтобы включить кириллицу
+  const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
   vocabData = buildVocabulary(words.join(' '));
   
   model = new WordWiseModel(vocabData.vocabSize, embeddingDim, hiddenSize);
@@ -75,7 +77,7 @@ async function train(payload: { textCorpus: string, numEpochs: number, learningR
   const { textCorpus, numEpochs, learningRate, batchSize, lossHistory } = payload;
   optimizer.learningRate = learningRate;
 
-  const words = textCorpus.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
+  const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
   if (words.length < 2) {
     throw new Error('Недостаточно слов для обучения в корпусе.');
   }
@@ -93,16 +95,23 @@ async function train(payload: { textCorpus: string, numEpochs: number, learningR
     }
 
     let epochLoss = 0;
-    let h = model.initializeStates(batchSize).h0;
-    let c = model.initializeStates(batchSize).c0;
-
+    
+    // Перебираем батчи для одной эпохи
     for (const batch of batches) {
+      // Состояния нужно сбрасывать для каждого нового батча, так как последовательности в батчах независимы.
+      // Но для stateful RNN между батчами одной эпохи состояние можно сохранять.
+      // Для простоты здесь мы сбрасываем состояние для каждого батча.
+      let h = model.initializeStates(batchSize).h0;
+      let c = model.initializeStates(batchSize).c0;
+
       const { outputLogits: predictionLogits, h: nextH, c: nextC } = model.forwardStep(batch.inputs, h, c);
-      h = nextH.detach();
+      h = nextH.detach(); // Отсоединяем от графа, чтобы градиент не тёк между батчами
       c = nextC.detach();
 
       const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batch.targets);
       epochLoss += lossTensor.data[0];
+      
+      // Обратный проход и шаг оптимизатора
       lossTensor.backward();
       optimizer.step(model.getParameters());
     }
@@ -122,9 +131,12 @@ async function train(payload: { textCorpus: string, numEpochs: number, learningR
     // Даем главному потоку время на обработку сообщений
     await new Promise(resolve => setTimeout(resolve, 0));
   }
-
-  self.postMessage({ type: 'training-complete' });
+  
+  // Сериализуем обученную модель и отправляем обратно
+  const modelJson = serializeModel(model, vocabData);
+  self.postMessage({ type: 'training-complete', payload: { modelJson } });
 }
+
 
 /**
  * Генерирует текст на основе начального слова.
@@ -184,3 +196,5 @@ function generate(payload: { startWord: string, numWords: number, temperature: n
 }
 
 self.postMessage({ type: 'worker-ready' });
+
+    

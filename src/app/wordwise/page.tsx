@@ -106,6 +106,14 @@ export default function WordwisePage() {
           setOutput('Обучение завершено. Проверьте генерацию и примените к чату.');
           setIsTraining(false);
           setIsTrained(true);
+           try {
+                const { model, vocabData } = deserializeModel(payload.modelJson);
+                modelRef.current = model;
+                vocabDataRef.current = vocabData;
+                toast({ title: "Успех!", description: "Модель из воркера успешно загружена." });
+            } catch (e) {
+                toast({ title: "Ошибка", description: `Не удалось десериализовать модель из воркера: ${e}`, variant: "destructive" });
+            }
           break;
         case 'training-stopped':
            setStatus(`Обучение остановлено на эпохе ${payload.epoch}.`);
@@ -125,7 +133,7 @@ export default function WordwisePage() {
     return () => {
       worker.terminate();
     };
-  }, [setTrainedModel]);
+  }, [setTrainedModel, toast]);
 
 
   const initializeWordWise = useCallback(() => {
@@ -184,7 +192,7 @@ export default function WordwisePage() {
   };
 
   const generateText = (startWord: string) => {
-    if (!modelRef.current) {
+    if (!modelRef.current || !vocabDataRef.current) {
       toast({ title: "Ошибка", description: "Сначала обучите или загрузите модель.", variant: "destructive" });
       return;
     }
@@ -194,6 +202,8 @@ export default function WordwisePage() {
      if (!wordToIndex.has(currentWord)) {
         currentWord = '<unk>';
         setOutput(`Начальное слово "${startWord}" не найдено. Используем "<unk>".\n`);
+     } else {
+        setOutput('');
      }
 
      let generatedSequence = [currentWord];
@@ -248,8 +258,6 @@ export default function WordwisePage() {
 
 
   const handleSaveModel = () => {
-    // This needs to be adapted for workers. The worker needs to send the model weights back.
-    // For now, we save the model from the main thread if it exists.
     if (!modelRef.current || !vocabDataRef.current) {
       toast({ title: "Ошибка", description: "Нет модели для сохранения.", variant: "destructive" });
       return;
@@ -333,7 +341,7 @@ export default function WordwisePage() {
                 <Tabs defaultValue="text" className="w-full">
                     <TabsList className="grid w-full grid-cols-2">
                         <TabsTrigger value="text"><FileText className="w-4 h-4 mr-2"/>Текст</TabsTrigger>
-                        <TabsTrigger value="image"><ImagePlus className="w-4 h-4 mr-2"/>Изображения</TabsTrigger>
+                        <TabsTrigger value="image" disabled><ImagePlus className="w-4 h-4 mr-2"/>Изображения (скоро)</TabsTrigger>
                     </TabsList>
                     <TabsContent value="text" className="mt-4">
                         <Label htmlFor="corpus">Ваш обучающий корпус:</Label>
@@ -543,3 +551,5 @@ export default function WordwisePage() {
     </div>
   );
 }
+
+    
