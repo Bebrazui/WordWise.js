@@ -98,26 +98,37 @@ export function createBatches(inputTensors: Tensor[], targetTensors: Tensor[], b
     const currentInputBatch = inputTensors.slice(i, i + batchSize);
     const currentTargetBatch = targetTensors.slice(i, i + batchSize);
 
+    const actualBatchSize = currentInputBatch.length;
+
     // Паддинг для последнего батча, если он неполный
-    if (currentInputBatch.length < batchSize) {
-        const paddingCount = batchSize - currentInputBatch.length;
+    if (actualBatchSize < batchSize) {
+        const paddingCount = batchSize - actualBatchSize;
         // Для входных индексов: добавляем индекс <unk> (0)
+        const unkTensor = new Tensor([0], [1]);
         for (let k = 0; k < paddingCount; k++) {
-            currentInputBatch.push(new Tensor([0], [1]));
+            currentInputBatch.push(unkTensor);
         }
-        // Для целевых one-hot векторов: добавляем нулевой вектор (вероятности 0 для всех классов)
+        // Для целевых one-hot векторов: добавляем нулевой вектор
         const zeroTarget = new Tensor(new Float32Array(targetTensors[0].size).fill(0), targetTensors[0].shape);
         for (let k = 0; k < paddingCount; k++) {
             currentTargetBatch.push(zeroTarget);
         }
     }
-
+    
     // Объединяем тензоры в один батчевый тензор
-    const batchedInputData = new Float32Array(currentInputBatch.flatMap(t => Array.from(t.data)));
-    const batchedTargetData = new Float32Array(currentTargetBatch.flatMap(t => Array.from(t.data)));
-
+    const batchedInputData = new Float32Array(batchSize);
+    for(let j=0; j<batchSize; j++) {
+        batchedInputData[j] = currentInputBatch[j].data[0];
+    }
+    
+    const vocabSize = currentTargetBatch[0].shape[1];
+    const batchedTargetData = new Float32Array(batchSize * vocabSize);
+     for(let j=0; j<batchSize; j++) {
+        batchedTargetData.set(currentTargetBatch[j].data, j * vocabSize);
+    }
+    
     const batchedInputTensor = new Tensor(batchedInputData, [batchSize, 1]); // [batchSize, 1]
-    const batchedTargetTensor = new Tensor(batchedTargetData, [batchSize, currentTargetBatch[0].shape[1]]); // [batchSize, vocabSize]
+    const batchedTargetTensor = new Tensor(batchedTargetData, [batchSize, vocabSize]); // [batchSize, vocabSize]
 
     batches.push({ inputs: batchedInputTensor, targets: batchedTargetTensor });
   }
