@@ -8,7 +8,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import { Info } from 'lucide-react';
 
 import { Tensor } from '../../lib/tensor';
-import { crossEntropyLossWithSoftmaxGrad, softmax } from '../../lib/layers';
+import { crossEntropyLossWithSoftmaxGrad } from '../../lib/layers';
 import { SGD } from '../../lib/optimizer';
 import { WordWiseModel } from '../../lib/model';
 import { buildVocabulary, wordsToInputTensors, wordsToTargetTensors, getWordFromPrediction, createBatches } from '../../utils/tokenizer';
@@ -20,11 +20,13 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Slider } from '@/components/ui/slider';
+import { PredictionVisualizer, Prediction } from '@/components/ui/prediction-visualizer';
 
 import { useTrainedModel } from '@/hooks/use-trained-model';
 
 export default function WordwisePage() {
   const [output, setOutput] = useState<string>('');
+  const [latestPredictions, setLatestPredictions] = useState<Prediction[]>([]);
   const [lossHistory, setLossHistory] = useState<{epoch: number, loss: number}[]>([]);
   const [status, setStatus] = useState<string>('Готов к инициализации.');
   const [isTraining, setIsTraining] = useState(false);
@@ -68,6 +70,7 @@ export default function WordwisePage() {
       console.log('Словарь:', vocab);
       setStatus('Готов к обучению.');
       setIsInitialized(true);
+      setLatestPredictions([]);
     } catch (error) {
       console.error("Ошибка инициализации:", error);
       setStatus(`Ошибка инициализации: ${error instanceof Error ? error.message : String(error)}`);
@@ -78,7 +81,7 @@ export default function WordwisePage() {
     trainingStopFlag.current = true;
   };
 
-  const trainWordWise = async () => {
+  const trainWordWise = useCallback(async () => {
     if (!modelRef.current || !vocabDataRef.current) {
         setStatus('Сначала инициализируйте модель.');
         return;
@@ -108,6 +111,7 @@ export default function WordwisePage() {
     setLossHistory([]);
     setStatus('Начинается обучение...');
     setOutput('');
+    setLatestPredictions([]);
     setTrainingProgress(0);
 
     for (let epoch = 0; epoch < numEpochs; epoch++) {
@@ -148,7 +152,7 @@ export default function WordwisePage() {
     }
     setIsTraining(false);
     trainingStopFlag.current = false;
-  };
+  }, [numEpochs, learningRate, textCorpus, isTraining, setTrainedModel]);
 
   const generateText = (startWord: string, numWords: number) => {
     if (!modelRef.current || !vocabDataRef.current) {
@@ -172,6 +176,7 @@ export default function WordwisePage() {
     let c = model.initializeStates(1).c0;
 
     setStatus(`Генерация текста, начало: "${currentWord}"...`);
+    setLatestPredictions([]);
 
     for (let i = 0; i < numWords; i++) {
       const inputTensor = new Tensor([wordToIndex.get(currentWord) || 0], [1]);
@@ -179,13 +184,15 @@ export default function WordwisePage() {
       h = nextH;
       c = nextC;
 
-      currentWord = getWordFromPrediction(predictionLogits, indexToWord, temperature);
+      const { chosenWord, topPredictions } = getWordFromPrediction(predictionLogits, indexToWord, temperature);
+      setLatestPredictions(topPredictions);
       
-      if (currentWord === 'вопрос' || currentWord === 'ответ') continue;
+      if (chosenWord === 'вопрос' || chosenWord === 'ответ') continue;
 
-      generatedSequence.push(currentWord);
+      generatedSequence.push(chosenWord);
+      currentWord = chosenWord;
 
-      if (currentWord === '<unk>') {
+      if (chosenWord === '<unk>') {
           break;
       }
     }
@@ -285,7 +292,7 @@ export default function WordwisePage() {
            <Card>
             <CardHeader>
               <CardTitle>Шаг 3: Проверьте генерацию</CardTitle>
-               <CardDescription>Здесь можно быстро проверить, как модель генерирует текст. Кнопки обновятся после инициализации.</CardDescription>
+               <CardDescription>Здесь можно быстро проверить, как модель генерирует текст и посмотреть "мысли" модели.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
                  <div className="grid grid-cols-2 gap-2">
@@ -307,6 +314,7 @@ export default function WordwisePage() {
                  <div className="mt-4 p-4 bg-slate-100 rounded-md min-h-[100px] text-gray-700 font-mono text-sm whitespace-pre-wrap">
                     {output || 'Результат генерации появится здесь...'}
                  </div>
+                 {latestPredictions.length > 0 && <PredictionVisualizer predictions={latestPredictions} />}
             </CardContent>
           </Card>
         </div>

@@ -60,13 +60,17 @@ export function indexToOneHot(index: number, vocabSize: number): Tensor {
 }
 
 /**
- * Выбирает слово из выходного тензора модели с учетом температуры.
+ * Выбирает слово из выходного тензора модели с учетом температуры и возвращает топ-5 предсказаний.
  * @param predictionLogits Тензор сырых логитов предсказания: [1, vocabSize].
  * @param indexToWord Карта индексов в слова.
  * @param temperature Параметр температуры для сэмплирования (по умолчанию 1.0).
- * @returns Предсказанное слово.
+ * @returns Объект с выбранным словом и топ-5 предсказаниями.
  */
-export function getWordFromPrediction(predictionLogits: Tensor, indexToWord: Map<number, string>, temperature: number = 1.0): string {
+export function getWordFromPrediction(
+  predictionLogits: Tensor, 
+  indexToWord: Map<number, string>, 
+  temperature: number = 1.0
+): { chosenWord: string; topPredictions: { word: string; probability: number }[] } {
   if (predictionLogits.shape.length !== 2 || predictionLogits.shape[0] !== 1) {
     throw new Error("Prediction tensor for word selection must be [1, vocabSize].");
   }
@@ -95,7 +99,18 @@ export function getWordFromPrediction(predictionLogits: Tensor, indexToWord: Map
     adjustedProbs[j] /= sumExp;
   }
 
-  // Выполняем выборку (сэмплирование)
+  // --- Находим топ-5 предсказаний для визуализации ---
+  const allPredictions = Array.from(adjustedProbs).map((probability, index) => ({
+    word: indexToWord.get(index) || '<unk>',
+    probability,
+    index,
+  }));
+
+  allPredictions.sort((a, b) => b.probability - a.probability);
+  const topPredictions = allPredictions.slice(0, 5);
+
+
+  // --- Выполняем выборку (сэмплирование) ---
   let randomValue = Math.random();
   let cumulativeProbability = 0;
   let predictedIndex = -1;
@@ -108,12 +123,13 @@ export function getWordFromPrediction(predictionLogits: Tensor, indexToWord: Map
     }
   }
   
-  // Если по какой-то причине ничего не выбралось (например, NaN в вероятностях), возвращаем <unk>
   if (predictedIndex === -1) {
-    predictedIndex = 0;
+    predictedIndex = 0; // Fallback to <unk>
   }
 
-  return indexToWord.get(predictedIndex) || '<unk>';
+  const chosenWord = indexToWord.get(predictedIndex) || '<unk>';
+  
+  return { chosenWord, topPredictions };
 }
 
 

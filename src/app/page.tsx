@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { BrainCircuit, Bot } from 'lucide-react';
 import Link from 'next/link';
+import { PredictionVisualizer, Prediction } from '@/components/ui/prediction-visualizer';
 
 import { useTrainedModel } from '@/hooks/use-trained-model';
 import { Tensor } from '@/lib/tensor';
@@ -22,6 +23,7 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [latestPredictions, setLatestPredictions] = useState<Prediction[]>([]);
   const { trainedModel, vocabData, temperature } = useTrainedModel();
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -37,38 +39,59 @@ export default function Home() {
     }
   }, [messages]);
 
-  const generateTextWithModel = (startWord: string, numWords: number): string => {
+  const generateTextWithModel = async (startWord: string, numWords: number) => {
     if (!trainedModel || !vocabData) {
-      return "Модель не обучена. Перейдите на страницу обучения.";
+      setMessages(prev => [...prev, { role: 'assistant', content: "Модель не обучена. Перейдите на страницу обучения." }]);
+      setIsLoading(false);
+      return;
     }
 
     const { wordToIndex, indexToWord } = vocabData;
-    let currentWord = startWord.toLowerCase().split(' ').pop() || '<unk>';
+    let currentInputWord = startWord.toLowerCase().split(' ').pop() || '<unk>';
 
-    if (!wordToIndex.has(currentWord)) {
-        currentWord = '<unk>';
+    if (!wordToIndex.has(currentInputWord)) {
+        currentInputWord = '<unk>';
     }
 
-    let generatedSequence = [startWord];
+    let generatedSequence: string[] = [];
     let h = trainedModel.initializeStates(1).h0;
     let c = trainedModel.initializeStates(1).c0;
+    
+    let botResponse: ChatMessage = { role: 'assistant', content: '' };
+    setMessages(prev => [...prev, botResponse]);
 
     for (let i = 0; i < numWords; i++) {
-      const inputTensor = new Tensor([wordToIndex.get(currentWord) || 0], [1]);
+      const inputTensor = new Tensor([wordToIndex.get(currentInputWord) || 0], [1]);
       const { outputLogits, h: nextH, c: nextC } = trainedModel.forwardStep(inputTensor, h, c);
       h = nextH;
       c = nextC;
 
-      currentWord = getWordFromPrediction(outputLogits, indexToWord, temperature);
+      const { chosenWord, topPredictions } = getWordFromPrediction(outputLogits, indexToWord, temperature);
+      setLatestPredictions(topPredictions);
       
-      if (currentWord === 'вопрос' || currentWord === 'ответ') continue;
+      if (chosenWord === 'вопрос' || chosenWord === 'ответ') {
+          await new Promise(resolve => setTimeout(resolve, 50)); // Небольшая пауза для рендеринга
+          continue;
+      };
 
-      generatedSequence.push(currentWord);
+      generatedSequence.push(chosenWord);
+      currentInputWord = chosenWord;
 
-      if (currentWord === '<unk>') break;
+      setMessages(prev => {
+        const newMessages = [...prev];
+        const lastMessage = newMessages[newMessages.length - 1];
+        if (lastMessage.role === 'assistant') {
+            lastMessage.content = generatedSequence.join(' ');
+        }
+        return newMessages;
+      });
+
+      if (chosenWord === '<unk>') break;
+
+      await new Promise(resolve => setTimeout(resolve, 150)); // Задержка для эффекта печатания
     }
     
-    return generatedSequence.slice(1).join(' ');
+    setLatestPredictions([]); // Очищаем визуализатор после генерации
   };
 
 
@@ -81,22 +104,19 @@ export default function Home() {
     const currentInput = input;
     setInput('');
     setIsLoading(true);
-    
-    setTimeout(() => {
-        let botResponseContent: string;
-        if (trainedModel && vocabData) {
-            botResponseContent = generateTextWithModel(currentInput, 15);
-        } else {
-            botResponseContent = `Я прототип. Модель WordWise.js еще не обучена. Перейдите в раздел обучения, чтобы научить меня отвечать.`;
-        }
 
+    if (trainedModel && vocabData) {
+        await generateTextWithModel(currentInput, 15);
+    } else {
+        const botResponseContent = `Я прототип. Модель WordWise.js еще не обучена. Перейдите в раздел обучения, чтобы научить меня отвечать.`;
         const botResponse: ChatMessage = {
             role: 'assistant',
             content: botResponseContent
         };
         setMessages(prev => [...prev, botResponse]);
-        setIsLoading(false);
-    }, 500);
+    }
+    
+    setIsLoading(false);
   };
 
   return (
@@ -138,7 +158,7 @@ export default function Home() {
                       ? 'bg-primary text-primary-foreground'
                       : 'bg-muted'
                     }`}>
-                    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    <p className="text-sm whitespace-pre-wrap">{message.content || '...'}</p>
                   </div>
                   {message.role === 'user' && (
                     <Avatar className="w-8 h-8">
@@ -147,25 +167,12 @@ export default function Home() {
                   )}
                 </div>
               ))}
-              {isLoading && (
-                <div className="flex items-start gap-3">
-                  <Avatar className="w-8 h-8">
-                    <AvatarFallback>AI</AvatarFallback>
-                  </Avatar>
-                  <div className="rounded-lg px-3 py-2 bg-muted">
-                    <div className="flex items-center space-x-1">
-                       <span className="h-2 w-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                       <span className="h-2 w-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                       <span className="h-2 w-2 bg-slate-400 rounded-full animate-bounce"></span>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </ScrollArea>
         </CardContent>
         <div className="p-4 border-t bg-background">
-          <form onSubmit={handleSubmit} className="flex gap-2">
+          {latestPredictions.length > 0 && <PredictionVisualizer predictions={latestPredictions} />}
+          <form onSubmit={handleSubmit} className="flex gap-2 mt-2">
             <Input
               value={input}
               onChange={e => setInput(e.target.value)}
