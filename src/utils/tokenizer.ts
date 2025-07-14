@@ -60,7 +60,8 @@ export function indexToOneHot(index: number, vocabSize: number): Tensor {
 }
 
 /**
- * Выбирает слово с наибольшей вероятностью из выходного тензора модели.
+ * Выбирает слово из распределения вероятностей.
+ * Вместо жадного выбора (argmax) используется сэмплирование, чтобы сделать текст более "живым".
  * @param predictionTensor Тензор вероятностей предсказания (после Softmax): [1, vocabSize].
  * @param indexToWord Карта индексов в слова.
  * @returns Предсказанное слово.
@@ -69,18 +70,23 @@ export function getWordFromPrediction(predictionTensor: Tensor, indexToWord: Map
   if (predictionTensor.shape.length !== 2 || predictionTensor.shape[0] !== 1) {
     throw new Error("Prediction tensor for word selection must be [1, vocabSize].");
   }
-  let maxProb = -1;
-  let predictedIndex = -1;
-  const vocabSize = predictionTensor.shape[1];
 
-  for (let j = 0; j < vocabSize; j++) {
-    if (predictionTensor.data[j] > maxProb) {
-      maxProb = predictionTensor.data[j];
-      predictedIndex = j;
+  const probabilities = predictionTensor.data;
+  const randomNumber = Math.random();
+  let cumulativeProbability = 0;
+
+  for (let i = 0; i < probabilities.length; i++) {
+    cumulativeProbability += probabilities[i];
+    if (randomNumber < cumulativeProbability) {
+      return indexToWord.get(i) || '<unk>';
     }
   }
-  return indexToWord.get(predictedIndex) || '<unk>';
+
+  // В крайнем случае, если из-за ошибок округления ничего не выбралось,
+  // возвращаем последний токен (или <unk>)
+  return indexToWord.get(probabilities.length - 1) || '<unk>';
 }
+
 
 /**
  * Создает батчи из последовательности входных и целевых тензоров.
