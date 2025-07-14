@@ -58,8 +58,12 @@ const wc = wordConnections as WordConnections;
 
 const defaultResponses = kb['неизвестная_фраза'].ответы;
 
-// --- State for avoiding repetition ---
+// --- State for avoiding repetition and simulating learning ---
 const lastResponseMap = new Map<string, string>();
+const sessionMemory = {
+    lastUnknownWord: null as string | null,
+    learnedWords: new Map<string, string>(),
+};
 
 
 // --- Bot's "Brain" ---
@@ -161,10 +165,10 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
             
             const intersection = new Set([...phraseWords].filter(x => wordsInInput.has(x)));
             const union = new Set([...phraseWords, ...wordsInInput]);
-            const score = union.size > 0 ? intersection.size / union.size : 0;
+            const jaccardSimilarity = union.size > 0 ? intersection.size / union.size : 0;
             
-            if (score > maxScoreForIntent) {
-                maxScoreForIntent = score;
+            if (jaccardSimilarity > maxScoreForIntent) {
+                maxScoreForIntent = jaccardSimilarity;
             }
         }
         
@@ -261,6 +265,32 @@ function isPersonalResponseToWellbeing(userInput: string, history: string[]): bo
     return isPersonal || isPositiveState;
 }
 
+/**
+ * Checks if the user is defining the last unknown word.
+ * @param userInput The user's message.
+ * @returns The definition if it's a definition, otherwise null.
+ */
+function isDefiningUnknownWord(userInput: string): string | null {
+    if (!sessionMemory.lastUnknownWord) {
+        return null;
+    }
+    const lowerInput = userInput.toLowerCase();
+    // Simple patterns to detect a definition, e.g., "X means Y", "X is Y"
+    const patterns = [
+        new RegExp(`^${sessionMemory.lastUnknownWord}\\s*-\\s*(.+)`),
+        new RegExp(`^${sessionMemory.lastUnknownWord}\\s*это\\s*(.+)`),
+        new RegExp(`^${sessionMemory.lastUnknownWord}\\s*значит\\s*(.+)`)
+    ];
+
+    for (const pattern of patterns) {
+        const match = lowerInput.match(pattern);
+        if (match && match[1]) {
+            return match[1].trim();
+        }
+    }
+    return null;
+}
+
 
 /**
  * Model Q (Creative): Generates a response by finding the best matching intent or using word connections.
@@ -272,6 +302,18 @@ function isPersonalResponseToWellbeing(userInput: string, history: string[]): bo
 function generateCreativeResponse(userInput: string, history: string[] = []): string {
   const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
   const wordsInInput = lowerCaseInput.split(/\s+/).filter(w => w);
+
+  // 0. Check if the user is defining a word we just asked about.
+  const definition = isDefiningUnknownWord(userInput);
+  if (definition && sessionMemory.lastUnknownWord) {
+      sessionMemory.learnedWords.set(sessionMemory.lastUnknownWord, definition);
+      const learnedWord = sessionMemory.lastUnknownWord;
+      sessionMemory.lastUnknownWord = null; // Clear the state
+      return `Понял! Теперь я знаю, что ${learnedWord} - это ${definition}. Спасибо!`;
+  }
+  
+  // Reset last unknown word if user moves on
+  sessionMemory.lastUnknownWord = null;
 
   // 1. Check for specific conversational contexts, like responding to "how are you?"
   if (isPersonalResponseToWellbeing(userInput, history)) {
@@ -286,7 +328,6 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
   }
 
   // 2. Try to find a direct or fuzzy match in the knowledge base first.
-  // This version will check for partial matches within the user input.
   let bestMatch: { intent: string; score: number } | null = null;
   for (const intent in kb) {
     if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
@@ -295,18 +336,16 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     for (const phrase of intentData.фразы) {
       const lowerPhrase = phrase.toLowerCase();
       
-      // Check if the known phrase is a substring of the user's input
       if (lowerCaseInput.includes(lowerPhrase)) {
-        const score = lowerPhrase.length / lowerCaseInput.length; // Simple score based on length ratio
+        const score = lowerPhrase.length / lowerCaseInput.length; 
         if (score > (bestMatch?.score ?? 0)) {
           bestMatch = { intent, score };
         }
       } else {
-        // Fallback to Levenshtein for typos if no substring match
         const distance = levenshteinDistance(lowerCaseInput, lowerPhrase);
         const threshold = Math.floor(lowerPhrase.length / 3);
         if (distance <= threshold) {
-            const score = (1 - (distance / lowerPhrase.length)) * 0.9; // Lower score for fuzzy matches
+            const score = (1 - (distance / lowerPhrase.length)) * 0.9;
             if (score > (bestMatch?.score ?? 0)) {
               bestMatch = { intent, score };
             }
@@ -315,7 +354,6 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     }
   }
 
-  // If a reasonably good match is found, use it.
   if (bestMatch && bestMatch.score > 0.5) {
     let responses = kb[bestMatch.intent].ответы;
     const lastResponse = lastResponseMap.get(bestMatch.intent);
@@ -324,7 +362,6 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     }
     const response = responses[Math.floor(Math.random() * responses.length)];
     lastResponseMap.set(bestMatch.intent, response);
-    // If the match was partial, we might slightly alter the response
     if (bestMatch.score < 1.0) {
       return synonymize(response) + " А что ты еще хотел узнать?";
     }
@@ -336,17 +373,30 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
   if (connectionResponse) {
     return synonymize(connectionResponse);
   }
+  
+  // Check if we already learned this word
+  const learnedMeaning = sessionMemory.learnedWords.get(lowerCaseInput);
+  if (learnedMeaning) {
+      return `Я помню, ты говорил, что ${lowerCaseInput} - это ${learnedMeaning}. Хочешь поговорить об этом?`;
+  }
 
   // 4. Fallback to a more creative, thoughtful default response.
   const thoughtfulResponses = [
     "Это интересный поворот. Дай мне секунду, чтобы обдумать это.",
     "Хм, ты затронул любопытную тему. Я пытаюсь найти связи...",
     "Твой вопрос заставляет меня взглянуть на вещи под другим углом.",
-    `Я размышляю над словом "${wordsInInput[0] || 'это'}"... и что оно может означать в этом контексте.`,
+    `Я размышляю над словом "${wordsInInput[0] || 'это'}"... и что оно может означать в этом контексте. Можешь объяснить?`,
     "Это сложный вопрос. Мои алгоритмы ищут наиболее подходящий ответ."
   ];
   const randomIndex = Math.floor(Math.random() * thoughtfulResponses.length);
-  return synonymize(thoughtfulResponses[randomIndex]);
+  const response = thoughtfulResponses[randomIndex];
+
+  // If the response is the one asking for context, set the unknown word
+  if (response.includes(`"${wordsInInput[0] || 'это'}"`)) {
+      sessionMemory.lastUnknownWord = wordsInInput[0] || null;
+  }
+
+  return synonymize(response);
 }
 
 /**
