@@ -519,14 +519,24 @@ function generateTelegraphicResponse(normalizedInput: string): string | null {
  */
 function getFallbackResponse(normalizedInput: string): string {
     const wordsInInput = normalizedInput.split(/\s+/).filter(w => w);
-    // Try to find a word that is not a known synonym or in the knowledge base
-    let unknownWord = wordsInInput.find(w => !syn[w] && !Object.keys(kb).some(k => kb[k].phrases.includes(w)) && !lw[w as keyof typeof lw]);
+    // Try to find a word that is not a known synonym or in the knowledge base, and is longer than 2 characters
+    let unknownWord = wordsInInput.find(w => 
+        w.length > 2 && 
+        !syn[w] && 
+        !Object.keys(kb).some(k => kb[k].phrases.includes(w)) && 
+        !lw[w as keyof typeof lw]
+    );
     
-    // If all words are known, pick the most complex one
+    // If all words are known, pick the most complex one (longest) that is not a stop word
     if (!unknownWord && wordsInInput.length > 0) {
-        unknownWord = wordsInInput.sort((a, b) => b.length - a.length)[0];
-    } else if (!unknownWord) {
-        unknownWord = 'это';
+        unknownWord = wordsInInput
+            .filter(w => w.length > 2)
+            .sort((a, b) => b.length - a.length)[0];
+    } 
+    
+    // If we still don't have a word (e.g., all words were short), we must have misunderstood.
+    if (!unknownWord) {
+        return kb.unknown_phrase.responses[Math.floor(Math.random() * kb.unknown_phrase.responses.length)];
     }
 
 
