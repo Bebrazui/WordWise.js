@@ -14,6 +14,7 @@ import knowledgeBase from '@/data/knowledge-base.json';
 import synonyms from '@/data/synonyms.json';
 import wordConnections from '@/data/word-connections.json';
 import learnedWords from '@/data/learned-words.json';
+import morphology from '@/data/morphology.json';
 
 // In a real-world scenario, this would be a proper database write.
 // For this environment, we simulate it, but it won't persist across server restarts.
@@ -65,30 +66,31 @@ type Synonyms = {
 type WordConnection = {
     value: string | string[];
     weight: number;
+    type: string;
 }
 
 type WordConnections = {
-  веса_частей_речи: {
-    [partOfSpeech: string]: number;
-  };
-  словарь_связей: {
-    [partOfSpeech: string]: {
-      [word: string]: {
-        [relation: string]: WordConnection;
-      };
-    };
-  };
+  [word: string]: WordConnection[];
 };
 
 type LearnedWords = {
   [word: string]: string;
 };
 
+type Morphology = {
+    prefixes: string[];
+    suffixes: string[];
+    endings: string[];
+};
+
+
 // --- Load Knowledge Bases ---
 const kb = knowledgeBase as KnowledgeBase;
 const syn = synonyms as Synonyms;
 const wc = wordConnections as WordConnections;
 const lw = learnedWords as LearnedWords;
+const morph = morphology as Morphology;
+
 
 // --- State Management ---
 const lastResponseMap = new Map<string, string>();
@@ -305,72 +307,75 @@ function findBestIntentMatch(normalizedInput: string): { intent: string; score: 
  * @returns A generated response string or null if no connection is found.
  */
 function generateConnectionResponse(normalizedInput: string): string | null {
-  const words = [...new Set(normalizedInput.split(/\s+/).filter(w => w.length > 2))]; 
-  const connections = wc.словарь_связей;
-  const posWeights = wc.веса_частей_речи;
+    const words = [...new Set(normalizedInput.split(/\s+/).filter(w => w.length > 2))];
+    const foundFacts: { fact: string; weight: number }[] = [];
 
-  const foundFacts: { word: string; fact: string; weight: number }[] = [];
-
-  const allWordsAndSynonyms = new Set(words);
-  words.forEach(word => {
-    if (syn[word]) {
-      syn[word].forEach(s => allWordsAndSynonyms.add(s));
-    }
-  });
-
-  for (const word of allWordsAndSynonyms) {
-    for (const partOfSpeech in connections) {
-      const wordsInPOS = connections[partOfSpeech as keyof typeof connections];
-      if (Object.prototype.hasOwnProperty.call(wordsInPOS, word)) {
-        const properties = wordsInPOS[word as keyof typeof wordsInPOS];
-        let fact = `${word.charAt(0).toUpperCase() + word.slice(1)}`;
-        let hasFact = false;
-        let totalWeight = 0;
-
-        const relations = Object.entries(properties).sort(([, a], [, b]) => b.weight - a.weight);
-
-        for (const [relation, data] of relations) {
-          const relationText = Array.isArray(data.value) ? data.value.join(', ') : data.value;
-          let newPart = '';
-          if (relation === 'is_a') {
-            newPart = ` - это ${relationText}`;
-          } else if (relation === 'can_do') {
-            newPart = `${hasFact ? ', который' : ''} может ${relationText}`;
-          } else if (relation === 'related_to') {
-            newPart = `. Связано с: ${relationText}`;
-          }
-          if (newPart) {
-            fact += newPart;
-            hasFact = true;
-            totalWeight += data.weight;
-          }
+    const allWordsAndSynonyms = new Set<string>();
+    words.forEach(word => {
+        allWordsAndSynonyms.add(word);
+        if (syn[word]) {
+            syn[word].forEach(s => allWordsAndSynonyms.add(s));
         }
-        
-        if (hasFact) {
-            fact += '.';
-            const finalWeight = (posWeights[partOfSpeech as keyof typeof posWeights] || 1) * totalWeight;
-            foundFacts.push({ word, fact, weight: finalWeight });
+    });
+
+    for (const word of allWordsAndSynonyms) {
+        if (wc[word]) {
+            const connections = [...wc[word]].sort((a, b) => b.weight - a.weight);
+            let fact = `${word.charAt(0).toUpperCase() + word.slice(1)}`;
+            let hasFact = false;
+            let totalWeight = 0;
+            
+            for (const conn of connections.slice(0, 2)) { // Take top 2 connections for a word
+                const connValue = Array.isArray(conn.value) ? conn.value.join(', ') : conn.value;
+                let newPart = '';
+                switch(conn.type) {
+                    case 'is_a':
+                        newPart = ` - это ${connValue}`;
+                        break;
+                    case 'can_do':
+                        newPart = `${hasFact ? ', который' : ''} может ${connValue}`;
+                        break;
+                    case 'related_to':
+                        newPart = `. Связано с: ${connValue}`;
+                        break;
+                    case 'property_of':
+                        newPart = `. Является свойством: ${connValue}`;
+                        break;
+                    case 'antonym':
+                        newPart = `, в противоположность - ${connValue}`;
+                        break;
+                }
+                
+                if (newPart) {
+                    fact += newPart;
+                    hasFact = true;
+                    totalWeight += conn.weight;
+                }
+            }
+
+            if (hasFact) {
+                fact += '.';
+                foundFacts.push({ fact, weight: totalWeight });
+            }
         }
-      }
     }
-  }
 
-  if (foundFacts.length === 0) {
-    return null;
-  }
-  
-  foundFacts.sort((a, b) => b.weight - a.weight);
+    if (foundFacts.length === 0) {
+        return null;
+    }
 
-  if (foundFacts.length === 1) {
-    return foundFacts[0].fact;
-  }
+    foundFacts.sort((a, b) => b.weight - a.weight);
 
-  let combinedResponse = 'Если я правильно тебя понимаю, ты говоришь о нескольких вещах. ';
-  const factStrings = foundFacts.slice(0, 2).map(f => f.fact.replace(/.$/, '')); // Combine top 2 facts
-  combinedResponse += factStrings.join(' и ');
-  combinedResponse += '. Это довольно интересное сочетание.';
+    if (foundFacts.length === 1) {
+        return foundFacts[0].fact;
+    }
 
-  return combinedResponse;
+    let combinedResponse = 'Если я правильно тебя понимаю, ты говоришь о нескольких вещах. ';
+    const factStrings = foundFacts.slice(0, 2).map(f => f.fact.replace(/.$/, '')); // Combine top 2 facts
+    combinedResponse += factStrings.join(' и ');
+    combinedResponse += '. Это довольно интересное сочетание.';
+
+    return combinedResponse;
 }
 
 // --- Pipeline Stage 7: Observer & Smart Fallback ---
