@@ -18,17 +18,6 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  webpack: (config, { isServer }) => {
-    // Exclude specific modules from client-side bundle
-    if (!isServer) {
-        config.externals = [
-            ...config.externals,
-            'sharp',
-            'onnxruntime-node',
-        ];
-    }
-    return config;
-  },
 };
 
 export default nextConfig;

@@ -7,7 +7,6 @@
  * - ContextualResponseOutput - The return type for the contextualResponse function.
  */
 
-import {findBestMatch} from '@/lib/semantic-search';
 import {z} from 'zod';
 
 const ContextualResponseInputSchema = z.object({
@@ -46,19 +45,20 @@ const knowledgeBase: {[key: string]: string} = {
 
 // A default response if no keyword is found.
 const defaultResponse = 'Интересная мысль. Я не совсем понимаю.';
-const SIMILARITY_THRESHOLD = 0.5;
 
 /**
- * This function uses semantic search to generate a response.
+ * This function uses simple keyword matching to generate a response.
  * @param userInput The user's message.
  * @returns A response string.
  */
-async function generateResponse(userInput: string): Promise<string> {
-  const documents = Object.keys(knowledgeBase);
-  const {bestMatch} = await findBestMatch(userInput, documents);
-
-  if (bestMatch && bestMatch.rating > SIMILARITY_THRESHOLD) {
-    return knowledgeBase[bestMatch.target];
+function generateResponse(userInput: string): string {
+  const lowerCaseInput = userInput.toLowerCase();
+  
+  // Find a keyword that is included in the user's input.
+  for (const keyword in knowledgeBase) {
+    if (lowerCaseInput.includes(keyword)) {
+      return knowledgeBase[keyword];
+    }
   }
 
   return defaultResponse;
@@ -69,7 +69,7 @@ async function generateResponse(userInput: string): Promise<string> {
 export async function contextualResponse(
   input: ContextualResponseInput
 ): Promise<ContextualResponseOutput> {
-  const aiResponse = await generateResponse(input.userInput);
+  const aiResponse = generateResponse(input.userInput);
 
   return {aiResponse};
 }
