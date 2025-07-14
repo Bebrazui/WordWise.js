@@ -68,7 +68,7 @@ export default function Home() {
       h = nextH;
       c = nextC;
 
-      const { chosenWord, topPredictions } = getWordFromPrediction(outputLogits, indexToWord, temperature);
+      const { chosenWord, topPredictions } = getWordFromPrediction(outputLogits, indexToWord, temperature, generatedSequence);
       setLatestPredictions(topPredictions);
       
       if (chosenWord === 'вопрос' || chosenWord === 'ответ') {

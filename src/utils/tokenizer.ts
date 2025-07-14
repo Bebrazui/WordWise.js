@@ -60,32 +60,48 @@ export function indexToOneHot(index: number, vocabSize: number): Tensor {
 }
 
 /**
- * Выбирает слово из выходного тензора модели с учетом температуры и возвращает топ-5 предсказаний.
+ * Выбирает слово из выходного тензора модели с учетом температуры и штрафа за повторение.
  * @param predictionLogits Тензор сырых логитов предсказания: [1, vocabSize].
  * @param indexToWord Карта индексов в слова.
- * @param temperature Параметр температуры для сэмплирования (по умолчанию 1.0).
+ * @param temperature Параметр температуры для сэмплирования.
+ * @param generatedSequence Массив уже сгенерированных слов для применения штрафа.
+ * @param repetitionPenalty Сила штрафа за повторение (например, 1.2).
  * @returns Объект с выбранным словом и топ-5 предсказаниями.
  */
 export function getWordFromPrediction(
-  predictionLogits: Tensor, 
-  indexToWord: Map<number, string>, 
-  temperature: number = 1.0
+  predictionLogits: Tensor,
+  indexToWord: Map<number, string>,
+  temperature: number = 1.0,
+  generatedSequence: string[] = [],
+  repetitionPenalty: number = 1.2
 ): { chosenWord: string; topPredictions: { word: string; probability: number }[] } {
   if (predictionLogits.shape.length !== 2 || predictionLogits.shape[0] !== 1) {
     throw new Error("Prediction tensor for word selection must be [1, vocabSize].");
   }
   const vocabSize = predictionLogits.shape[1];
-  const logits = predictionLogits.data;
+  const logits = predictionLogits.data.slice(); // Копируем, чтобы не изменять исходные логиты
 
+  // --- 1. Применяем штраф за повторение ---
+  const generatedWordSet = new Set(generatedSequence);
+  for (let i = 0; i < vocabSize; i++) {
+    const word = indexToWord.get(i);
+    if (word && generatedWordSet.has(word)) {
+      // Понижаем логиты для уже сгенерированных слов
+      // Если логит положительный, делим на штраф; если отрицательный, умножаем
+      logits[i] = logits[i] > 0 ? logits[i] / repetitionPenalty : logits[i] * repetitionPenalty;
+    }
+  }
+
+  // --- 2. Применяем температуру и Softmax ---
   const adjustedProbs = new Float32Array(vocabSize);
   let sumExp = 0;
 
-  // Вычитаем максимум для численной стабильности
-  let maxLogit = logits[0];
-  for (let j = 1; j < vocabSize; j++) {
-      if (logits[j] > maxLogit) {
-          maxLogit = logits[j];
-      }
+  // Находим максимум для численной стабильности
+  let maxLogit = -Infinity;
+  for (let j = 0; j < vocabSize; j++) {
+    if (logits[j] > maxLogit) {
+      maxLogit = logits[j];
+    }
   }
 
   for (let j = 0; j < vocabSize; j++) {
@@ -99,7 +115,7 @@ export function getWordFromPrediction(
     adjustedProbs[j] /= sumExp;
   }
 
-  // --- Находим топ-5 предсказаний для визуализации ---
+  // --- 3. Находим топ-5 предсказаний для визуализации (уже с учетом штрафов и температуры) ---
   const allPredictions = Array.from(adjustedProbs).map((probability, index) => ({
     word: indexToWord.get(index) || '<unk>',
     probability,
@@ -109,8 +125,7 @@ export function getWordFromPrediction(
   allPredictions.sort((a, b) => b.probability - a.probability);
   const topPredictions = allPredictions.slice(0, 5);
 
-
-  // --- Выполняем выборку (сэмплирование) ---
+  // --- 4. Выполняем выборку (сэмплирование) ---
   let randomValue = Math.random();
   let cumulativeProbability = 0;
   let predictedIndex = -1;
@@ -122,13 +137,13 @@ export function getWordFromPrediction(
       break;
     }
   }
-  
+
   if (predictedIndex === -1) {
     predictedIndex = 0; // Fallback to <unk>
   }
 
   const chosenWord = indexToWord.get(predictedIndex) || '<unk>';
-  
+
   return { chosenWord, topPredictions };
 }
 
