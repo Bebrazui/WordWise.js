@@ -100,10 +100,10 @@ export default function WordwisePage() {
     trainingStopFlag.current = true;
   };
 
-  const trainWordWise = useCallback(async () => {
+  const trainWordWise = async () => {
     if (!modelRef.current || !vocabDataRef.current || !optimizerRef.current) {
-        setStatus('Сначала инициализируйте модель.');
-        return;
+      setStatus('Сначала инициализируйте модель.');
+      return;
     }
     if (isTraining) return;
 
@@ -118,62 +118,69 @@ export default function WordwisePage() {
 
     const words = textCorpus.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
     if (words.length < 2) {
-        setStatus('Недостаточно слов для обучения в корпусе.');
-        setIsTraining(false);
-        return;
+      setStatus('Недостаточно слов для обучения в корпусе.');
+      setIsTraining(false);
+      return;
     }
 
     const inputTensors = wordsToInputTensors(words.slice(0, -1), wordToIndex);
     const targetTensors = wordsToTargetTensors(words.slice(1), wordToIndex, vocabSize);
     const batches = createBatches(inputTensors, targetTensors, batchSize);
-    
-    const newLossHistory = [...lossHistory]; 
+
+    const newLossHistory = [...lossHistory];
     const startEpoch = newLossHistory.length > 0 ? newLossHistory[newLossHistory.length - 1].epoch + 1 : 1;
-    
+
     setStatus('Начинается обучение...');
     setTrainingProgress(0);
 
-    for (let epoch = 0; epoch < numEpochs; epoch++) {
-        if (trainingStopFlag.current) {
-            setStatus(`Обучение остановлено на эпохе ${startEpoch + epoch}.`);
-            break;
-        }
-        let epochLoss = 0;
-        let h = model.initializeStates(batchSize).h0;
-        let c = model.initializeStates(batchSize).c0;
+    let epoch = 0;
 
-        for (const batch of batches) {
-            const { outputLogits: predictionLogits, h: nextH, c: nextC } = model.forwardStep(batch.inputs, h, c);
-            h = nextH.detach();
-            c = nextC.detach();
-
-            const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batch.targets);
-            epochLoss += lossTensor.data[0];
-            lossTensor.backward();
-            optimizer.step(model.getParameters());
+    const runEpoch = async () => {
+      if (epoch >= numEpochs || trainingStopFlag.current) {
+        setIsTrained(true);
+        setLossHistory([...newLossHistory]);
+        if (!trainingStopFlag.current) {
+            setStatus('Обучение завершено. Модель готова к проверке и применению.');
+            setOutput('Обучение WordWise.js завершено. Проверьте генерацию и нажмите "Применить к чату".');
+        } else {
+             setStatus(`Обучение остановлено на эпохе ${startEpoch + epoch}.`);
         }
+        setIsTraining(false);
+        trainingStopFlag.current = false;
+        return;
+      }
 
-        const avgEpochLoss = epochLoss / batches.length;
-        const currentEpochNumber = startEpoch + epoch;
-        newLossHistory.push({epoch: currentEpochNumber, loss: avgEpochLoss});
-        
-        if (epoch % 1 === 0 || epoch === numEpochs - 1) {
-             setLossHistory([...newLossHistory]);
-             setStatus(`Обучение: Эпоха ${currentEpochNumber}, Потеря: ${avgEpochLoss.toFixed(6)}`);
-             setTrainingProgress(((epoch + 1) / numEpochs) * 100);
-             await new Promise(resolve => setTimeout(resolve, 0));
-        }
-    }
-    
-    setIsTrained(true);
-    setLossHistory([...newLossHistory]);
-    if (!trainingStopFlag.current) {
-        setStatus('Обучение завершено. Модель готова к проверке и применению.');
-        setOutput('Обучение WordWise.js завершено. Проверьте генерацию и нажмите "Применить к чату".');
-    }
-    setIsTraining(false);
-    trainingStopFlag.current = false;
-  }, [numEpochs, learningRate, textCorpus, batchSize, isTraining, lossHistory]);
+      let epochLoss = 0;
+      let h = model.initializeStates(batchSize).h0;
+      let c = model.initializeStates(batchSize).c0;
+
+      for (const batch of batches) {
+        const { outputLogits: predictionLogits, h: nextH, c: nextC } = model.forwardStep(batch.inputs, h, c);
+        h = nextH.detach();
+        c = nextC.detach();
+
+        const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batch.targets);
+        epochLoss += lossTensor.data[0];
+        lossTensor.backward();
+        optimizer.step(model.getParameters());
+      }
+
+      const avgEpochLoss = epochLoss / batches.length;
+      const currentEpochNumber = startEpoch + epoch;
+      newLossHistory.push({ epoch: currentEpochNumber, loss: avgEpochLoss });
+
+      setLossHistory([...newLossHistory]);
+      setStatus(`Обучение: Эпоха ${currentEpochNumber}, Потеря: ${avgEpochLoss.toFixed(6)}`);
+      setTrainingProgress(((epoch + 1) / numEpochs) * 100);
+
+      epoch++;
+      // Даем браузеру передышку для перерисовки UI
+      await new Promise(resolve => setTimeout(resolve, 0));
+      runEpoch();
+    };
+
+    runEpoch();
+  };
 
   const applyToChat = () => {
     if (!modelRef.current || !vocabDataRef.current) {
