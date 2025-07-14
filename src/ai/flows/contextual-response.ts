@@ -17,6 +17,7 @@ const ContextualResponseInputSchema = z.object({
     .string()
     .describe('The user input to which the AI should respond.'),
   model: z.enum(['R', 'Q']).describe('The model to use: R for Rigid, Q for Creative.'),
+  history: z.array(z.string()).optional().describe('The last 3 messages in the conversation.'),
 });
 export type ContextualResponseInput = z.infer<
   typeof ContextualResponseInputSchema
@@ -87,15 +88,16 @@ function synonymize(sentence: string): string {
 /**
  * Model R (Rigid): Generates a response based on strict keyword matching from the knowledge base.
  * @param userInput The user's message.
+ * @param history The conversation history.
  * @returns A response string.
  */
-function generateRigidResponse(userInput: string): string {
-  const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
+function generateRigidResponse(userInput: string, history: string[] = []): string {
+  const fullInput = [...history, userInput].join(' ').toLowerCase().replace(/[.,!?]/g, '');
 
   for (const intent in kb) {
     if (Object.prototype.hasOwnProperty.call(kb, intent)) {
       const intentData = kb[intent];
-      if (intentData.фразы.some(phrase => lowerCaseInput.includes(phrase.toLowerCase()))) {
+      if (intentData.фразы.some(phrase => fullInput.includes(phrase.toLowerCase()))) {
         const responses = intentData.ответы;
         const randomIndex = Math.floor(Math.random() * responses.length);
         return synonymize(responses[randomIndex]);
@@ -112,10 +114,12 @@ function generateRigidResponse(userInput: string): string {
  * Model Q (Creative): Generates a response by finding the best matching intent or using word connections.
  * It uses a scoring mechanism to find the "ideal" response.
  * @param userInput The user's message.
+ * @param history The conversation history.
  * @returns A response string.
  */
-function generateCreativeResponse(userInput: string): string {
-    const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
+function generateCreativeResponse(userInput: string, history: string[] = []): string {
+    const fullInput = [...history, userInput].join(' ');
+    const lowerCaseInput = fullInput.toLowerCase().replace(/[.,!?]/g, '');
     const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
 
     let bestMatch: { intent: string; score: number } | null = null;
@@ -227,9 +231,9 @@ export async function contextualResponse(
   let aiResponse: string;
 
   if (input.model === 'Q') {
-    aiResponse = generateCreativeResponse(input.userInput);
+    aiResponse = generateCreativeResponse(input.userInput, input.history);
   } else {
-    aiResponse = generateRigidResponse(input.userInput);
+    aiResponse = generateRigidResponse(input.userInput, input.history);
   }
 
   return {aiResponse};

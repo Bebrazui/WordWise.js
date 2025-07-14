@@ -13,7 +13,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Send, Bot, User, BrainCircuit, BotIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { Separator } from "@/components/ui/separator";
 
 type Message = {
   id: number;
@@ -62,7 +61,7 @@ export function Chat() {
       text: values.message,
       sender: "user",
     };
-    
+
     const typingMessage: Message = {
       id: Date.now() + 1,
       text: "",
@@ -70,14 +69,22 @@ export function Chat() {
       isTyping: true,
     };
 
-    setMessages((prev) => [...prev, userMessage, typingMessage]);
+    const newMessages = [...messages, userMessage];
+    setMessages([...newMessages, typingMessage]);
     form.reset();
     setIsLoading(true);
 
     try {
+      // Get last 3 messages for context
+      const history = newMessages.slice(-4, -1).map(m => m.text);
+
       await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
       
-      const response = await contextualResponse({ userInput: values.message, model: activeModel });
+      const response = await contextualResponse({ 
+        userInput: values.message, 
+        model: activeModel,
+        history,
+      });
 
       const aiMessage: Message = {
         id: Date.now() + 2,
