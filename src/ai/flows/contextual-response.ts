@@ -537,3 +537,4 @@ export async function contextualResponse(
   const aiResponse = await generateCreativeResponse(input.userInput, history);
   return {aiResponse};
 }
+
