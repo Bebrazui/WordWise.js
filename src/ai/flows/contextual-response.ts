@@ -269,9 +269,8 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
 
   // 1. Check for specific conversational contexts, like responding to "how are you?"
   if (isPersonalResponseToWellbeing(userInput, history)) {
-    let responses = kb['как_дела'].ответы;
-    // Find a suitable response, maybe one that acknowledges the user's answer
-     const suitableResponses = [
+    // This is a direct response to a question about the user's wellbeing.
+    const suitableResponses = [
         "Рад это слышать!",
         "Отлично! Чем теперь займемся?",
         "Здорово! Если что-то понадобится, я здесь.",
@@ -280,7 +279,8 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
      return synonymize(suitableResponses[Math.floor(Math.random() * suitableResponses.length)]);
   }
 
-  // 2. Try to find a direct or fuzzy match in the knowledge base first
+  // 2. Try to find a direct or fuzzy match in the knowledge base first.
+  // This version will check for partial matches within the user input.
   let bestMatch: { intent: string; score: number } | null = null;
   for (const intent in kb) {
     if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
@@ -289,29 +289,28 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     for (const phrase of intentData.фразы) {
       const lowerPhrase = phrase.toLowerCase();
       
-      const distance = levenshteinDistance(lowerCaseInput, lowerPhrase);
-      // More forgiving for longer phrases
-      const threshold = Math.floor(lowerPhrase.length / 3); // More forgiving threshold
-      if (distance <= threshold) {
-          const score = 1 - (distance / lowerPhrase.length);
-          if (score > (bestMatch?.score ?? 0)) {
-            bestMatch = { intent, score };
-          }
+      // Check if the known phrase is a substring of the user's input
+      if (lowerCaseInput.includes(lowerPhrase)) {
+        const score = lowerPhrase.length / lowerCaseInput.length; // Simple score based on length ratio
+        if (score > (bestMatch?.score ?? 0)) {
+          bestMatch = { intent, score };
+        }
+      } else {
+        // Fallback to Levenshtein for typos if no substring match
+        const distance = levenshteinDistance(lowerCaseInput, lowerPhrase);
+        const threshold = Math.floor(lowerPhrase.length / 3);
+        if (distance <= threshold) {
+            const score = (1 - (distance / lowerPhrase.length)) * 0.9; // Lower score for fuzzy matches
+            if (score > (bestMatch?.score ?? 0)) {
+              bestMatch = { intent, score };
+            }
+        }
       }
     }
   }
-  
-  // A special check for wellbeing questions directed at the bot.
-  if (!bestMatch || bestMatch.score < 0.75) {
-      const isAskingAboutBot = questionAboutWellbeing.some(q => lowerCaseInput.includes(q.split(' ')[0]));
-      if(isAskingAboutBot) {
-          bestMatch = { intent: 'как_дела', score: 0.9 };
-      }
-  }
 
-
-  // If a reasonably good match is found, use it. This makes the bot feel responsive to direct questions.
-  if (bestMatch && bestMatch.score > 0.7) {
+  // If a reasonably good match is found, use it.
+  if (bestMatch && bestMatch.score > 0.5) {
     let responses = kb[bestMatch.intent].ответы;
     const lastResponse = lastResponseMap.get(bestMatch.intent);
     if (lastResponse && responses.length > 1) {
@@ -319,6 +318,10 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     }
     const response = responses[Math.floor(Math.random() * responses.length)];
     lastResponseMap.set(bestMatch.intent, response);
+    // If the match was partial, we might slightly alter the response
+    if (bestMatch.score < 1.0) {
+      return synonymize(response) + " А что ты еще хотел узнать?";
+    }
     return synonymize(response);
   }
 
