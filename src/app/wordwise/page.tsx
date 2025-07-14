@@ -5,7 +5,7 @@
 import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Info } from 'lucide-react';
+import { Info } from 'lucide-react';
 
 import { Tensor } from '../../lib/tensor';
 import { crossEntropyLossWithSoftmaxGrad, softmax } from '../../lib/layers';
@@ -20,9 +20,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
-
 import { useTrainedModel } from '@/hooks/use-trained-model';
-
 
 export default function WordwisePage() {
   const [output, setOutput] = useState<string>('');
@@ -34,7 +32,6 @@ export default function WordwisePage() {
   const [textCorpus, setTextCorpus] = useState("вопрос: привет ответ: привет как дела\nвопрос: как дела ответ: все хорошо спасибо");
   const [sampleWords, setSampleWords] = useState<string[]>([]);
   
-  // Параметры обучения
   const [learningRate, setLearningRate] = useState(0.01);
   const [numEpochs, setNumEpochs] = useState(500);
 
@@ -45,15 +42,15 @@ export default function WordwisePage() {
   const vocabDataRef = useRef<{ vocab: string[]; wordToIndex: Map<string, number>; indexToWord: Map<number, string>; vocabSize: number } | null>(null);
   const trainingStopFlag = useRef(false);
 
-  // Параметры модели
-  const embeddingDim = 32;
-  const hiddenSize = 64;
+  const embeddingDim = 64;
+  const hiddenSize = 128;
   const batchSize = 4;
   
-  const initializeWordWise = () => {
+  const initializeWordWise = useCallback(() => {
     try {
       setStatus('Инициализация WordWise.js...');
-      const { vocab, wordToIndex, indexToWord, vocabSize } = buildVocabulary(textCorpus);
+      const words = textCorpus.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
+      const { vocab, wordToIndex, indexToWord, vocabSize } = buildVocabulary(words.join(' '));
       vocabDataRef.current = { vocab, wordToIndex, indexToWord, vocabSize };
 
       modelRef.current = new WordWiseModel(vocabSize, embeddingDim, hiddenSize);
@@ -74,14 +71,14 @@ export default function WordwisePage() {
       console.error("Ошибка инициализации:", error);
       setStatus(`Ошибка инициализации: ${error instanceof Error ? error.message : String(error)}`);
     }
-  };
+  }, [textCorpus, learningRate, setVocabData]);
   
   const stopTraining = () => {
     trainingStopFlag.current = true;
   };
 
   const trainWordWise = async () => {
-    if (!isInitialized) {
+    if (!modelRef.current || !vocabDataRef.current) {
         setStatus('Сначала инициализируйте модель.');
         return;
     }
@@ -89,12 +86,11 @@ export default function WordwisePage() {
 
     setIsTraining(true);
     trainingStopFlag.current = false;
-    const model = modelRef.current!;
-    // Пересоздаем оптимизатор с актуальной скоростью обучения
+    const model = modelRef.current;
     const optimizer = new SGD(learningRate);
     optimizerRef.current = optimizer;
 
-    const { wordToIndex, vocabSize } = vocabDataRef.current!;
+    const { wordToIndex, vocabSize } = vocabDataRef.current;
 
     const words = textCorpus.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
     if (words.length < 2) {
@@ -108,7 +104,7 @@ export default function WordwisePage() {
     const batches = createBatches(inputTensors, targetTensors, batchSize);
     
     const newLossHistory: {epoch: number, loss: number}[] = [];
-    setLossHistory(newLossHistory);
+    setLossHistory([]);
     setStatus('Начинается обучение...');
     setOutput('');
     setTrainingProgress(0);
@@ -164,11 +160,10 @@ export default function WordwisePage() {
     const { wordToIndex, indexToWord } = vocabDataRef.current;
     let currentWord = startWord.toLowerCase();
     
+    let initialOutput = '';
     if (!wordToIndex.has(currentWord)) {
         currentWord = '<unk>';
-        setOutput(`Начальное слово "${startWord}" не найдено. Используем "<unk>".`);
-    } else {
-        setOutput('');
+        initialOutput = `Начальное слово "${startWord}" не найдено. Используем "<unk>".\n`;
     }
 
     let generatedSequence = [currentWord];
@@ -194,7 +189,7 @@ export default function WordwisePage() {
           break;
       }
     }
-    setOutput(prev => prev + `\nСгенерированный текст: ${generatedSequence.join(' ')}`);
+    setOutput(initialOutput + `Сгенерированный текст: ${generatedSequence.join(' ')}`);
     setStatus('Генерация текста завершена.');
   };
 
@@ -275,7 +270,7 @@ export default function WordwisePage() {
             <CardHeader>
               <CardTitle>Шаг 3: Проверьте генерацию</CardTitle>
                <CardDescription>Здесь можно быстро проверить, как модель генерирует текст. Кнопки обновятся после инициализации.</CardDescription>
-            </Header>
+            </CardHeader>
             <CardContent className="space-y-4">
                  <div className="grid grid-cols-2 gap-2">
                     {sampleWords.length > 0 ? (
@@ -336,3 +331,5 @@ export default function WordwisePage() {
     </div>
   );
 }
+
+    
