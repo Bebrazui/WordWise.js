@@ -224,116 +224,110 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
  * @returns A response string.
  */
 function generateCreativeResponse(userInput: string, history: string[] = []): string {
-    const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
-    const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
+  const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
+  const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
 
-    let bestMatch: { intent: string; score: number } | null = null;
+  // 1. Try to find a direct match in the knowledge base first
+  let bestMatch: { intent: string; score: number } | null = null;
+  for (const intent in kb) {
+    if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
 
-    // 1. Calculate best match from knowledge base
-    for (const intent in kb) {
-        if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
+    const intentData = kb[intent];
+    for (const phrase of intentData.фразы) {
+      const lowerPhrase = phrase.toLowerCase();
+      const phraseWords = new Set(lowerPhrase.split(/\s+/).filter(Boolean));
+      const intersection = new Set([...phraseWords].filter(x => wordsInInput.has(x)));
+      const score = intersection.size;
 
-        const intentData = kb[intent];
-        let highestScoreForIntent = 0;
-
-        for (const phrase of intentData.фразы) {
-            const lowerPhrase = phrase.toLowerCase();
-            const phraseWords = new Set(lowerPhrase.split(/\s+/).filter(Boolean));
-            const intersection = new Set([...phraseWords].filter(x => {
-                // Check for partial matches (e.g., "привет" in "приветик")
-                for (const inputWord of wordsInInput) {
-                    if (inputWord.includes(x) || x.includes(inputWord)) {
-                        return true;
-                    }
-                }
-                return false;
-            }));
-
-            const union = new Set([...phraseWords, ...wordsInInput]);
-            const score = union.size > 0 ? intersection.size / union.size : 0; // Jaccard similarity
-            
-            if (score > highestScoreForIntent) {
-                highestScoreForIntent = score;
-            }
-        }
-
-        if (highestScoreForIntent > 0 && (!bestMatch || highestScoreForIntent > bestMatch.score)) {
-            bestMatch = { intent, score: highestScoreForIntent };
-        }
-    }
-
-    // 2. Decide if the match is good enough
-    if (bestMatch && bestMatch.score > 0.1) {
-        const responses = kb[bestMatch.intent].ответы;
-        const randomIndex = Math.floor(Math.random() * responses.length);
-        return synonymize(responses[randomIndex]);
-    }
-
-    // 3. If no good match, ALWAYS try to generate from word connections.
-    const connectionResponse = generateConnectionResponse(userInput);
-    
-    // 4. Fallback to a creative default if no connection is found
-    if (connectionResponse) {
-        return synonymize(connectionResponse);
-    }
-    
-    return synonymize("Хм, интересный вопрос. Дай-ка подумать...");
-}
-
-/**
- * Helper for Model Q. Generates a response based on word connections if a direct intent is not found.
- * @param userInput The user's message.
- * @returns A generated response string or null if no connection is found.
- */
-function generateConnectionResponse(userInput: string): string | null {
-  const lowerCaseInput = userInput.toLowerCase();
-  const words = lowerCaseInput.split(/\s+/).filter(w => w.length > 0);
-  const connections = wc.словарь_связей;
-
-  for (const word of words) {
-    for (const partOfSpeech in connections) {
-      const wordsInPOS = connections[partOfSpeech as keyof typeof connections];
-      if (Object.prototype.hasOwnProperty.call(wordsInPOS, word)) {
-        const properties = wordsInPOS[word as keyof typeof wordsInPOS];
-        const isA = properties.is_a;
-        const canDo = properties.can_do;
-
-        let response = `${word.charAt(0).toUpperCase() + word.slice(1)}`;
-
-        if (isA) {
-          response += ` - это ${
-            Array.isArray(isA) ? isA.join(', ') : isA
-          }.`;
-        } else {
-          response += '.';
-        }
-
-        if (canDo) {
-          response += ` Может ${
-            Array.isArray(canDo) ? canDo.join(', ') : canDo
-          }.`;
-        }
-        return response;
+      if (score > (bestMatch?.score ?? 0)) {
+        bestMatch = { intent, score };
       }
     }
   }
 
-  for (const word of words) {
+  // If a reasonably good match is found, use it. This makes the bot feel responsive to direct questions.
+  if (bestMatch && bestMatch.score > 0) {
+    const responses = kb[bestMatch.intent].ответы;
+    const randomIndex = Math.floor(Math.random() * responses.length);
+    return synonymize(responses[randomIndex]);
+  }
+
+  // 2. If no direct match, get creative with word connections.
+  const connectionResponse = generateConnectionResponse(userInput);
+  if (connectionResponse) {
+    return synonymize(connectionResponse);
+  }
+
+  // 3. Fallback to a more creative, thoughtful default response.
+  // This avoids the "I don't know" trap.
+  const thoughtfulResponses = [
+    "Это интересный поворот. Дай мне секунду, чтобы обдумать это.",
+    "Хм, ты затронул любопытную тему. Я пытаюсь найти связи...",
+    "Твой вопрос заставляет меня взглянуть на вещи под другим углом.",
+    `Я размышляю над словом "${[...wordsInInput][0] || 'это'}"... и что оно может означать в этом контексте.`,
+    "Это сложный вопрос. Мои алгоритмы ищут наиболее подходящий ответ."
+  ];
+  const randomIndex = Math.floor(Math.random() * thoughtfulResponses.length);
+  return synonymize(thoughtfulResponses[randomIndex]);
+}
+
+/**
+ * Helper for Model Q. Generates a response based on word connections if a direct intent is not found.
+ * This version is more "creative" and tries to combine information.
+ * @param userInput The user's message.
+ * @returns A generated response string or null if no connection is found.
+ */
+function generateConnectionResponse(userInput: string): string | null {
+  const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
+  const words = [...new Set(lowerCaseInput.split(/\s+/).filter(w => w.length > 2))]; // Use unique words, ignore short ones
+  const connections = wc.словарь_связей;
+  
+  const foundFacts: { word: string, fact: string }[] = [];
+
+  // Get all synonyms to broaden the search
+  const allWordsAndSynonyms = new Set(words);
+  words.forEach(word => {
+    if (syn[word]) {
+      syn[word].forEach(s => allWordsAndSynonyms.add(s));
+    }
+  });
+
+  // Find all possible connections for the words in the input
+  for (const word of allWordsAndSynonyms) {
     for (const partOfSpeech in connections) {
-       const wordsInPOS = connections[partOfSpeech as keyof typeof connections];
-       for (const mainWord in wordsInPOS) {
-        const properties = wordsInPOS[mainWord as keyof typeof wordsInPOS];
-        for (const prop in properties) {
-            const values = properties[prop as keyof typeof properties];
-            if(Array.isArray(values) && values.includes(word)) {
-                return `${word.charAt(0).toUpperCase() + word.slice(1)} - это один из примеров для '${mainWord}'.`;
-            }
+      const wordsInPOS = connections[partOfSpeech as keyof typeof connections];
+      if (Object.prototype.hasOwnProperty.call(wordsInPOS, word)) {
+        const properties = wordsInPOS[word as keyof typeof wordsInPOS];
+        let fact = `${word.charAt(0).toUpperCase() + word.slice(1)}`;
+
+        if (properties.is_a) {
+          fact += ` - это ${Array.isArray(properties.is_a) ? properties.is_a[0] : properties.is_a}`;
         }
-       }
+        if (properties.can_do) {
+           fact += `, который может ${Array.isArray(properties.can_do) ? properties.can_do[0] : properties.can_do}.`;
+        } else {
+           fact += ".";
+        }
+        foundFacts.push({ word, fact });
+      }
     }
   }
 
-  return null;
+  if (foundFacts.length === 0) {
+    return null; // No connections found
+  }
+
+  if (foundFacts.length === 1) {
+    return foundFacts[0].fact; // Only one fact, return it
+  }
+  
+  // If multiple facts are found, try to combine them into a coherent sentence
+  let combinedResponse = "Если я правильно тебя понимаю, ты говоришь о нескольких вещах. ";
+  const factStrings = foundFacts.map(f => f.fact.replace(/.$/, '')); // remove trailing period
+  combinedResponse += factStrings.join(' и ');
+  combinedResponse += ". Это довольно интересное сочетание.";
+
+  return combinedResponse;
 }
 
 
