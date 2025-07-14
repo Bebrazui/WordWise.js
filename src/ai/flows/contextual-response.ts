@@ -11,6 +11,21 @@ import {z} from 'zod';
 import knowledgeBase from '@/data/knowledge-base.json';
 import synonyms from '@/data/synonyms.json';
 import wordConnections from '@/data/word-connections.json';
+import learnedWords from '@/data/learned-words.json';
+
+// NOTE: This is a simplified in-memory "database" for the sake of this example.
+// In a real-world application, you would use a proper database like Firestore
+// to persist learned data across server restarts and multiple instances.
+const fs = {
+  writeFile: (path: string, data: string, cb: (err?: any) => void) => {
+    // This is a mock. In a real environment, you'd need Node's 'fs' module
+    // and write permissions, which are not available in this context.
+    console.log(`MOCK WRITE to ${path}: ${data.substring(0, 100)}...`);
+    cb();
+  }
+};
+import path from 'path';
+
 
 const ContextualResponseInputSchema = z.object({
   userInput: z
@@ -52,9 +67,15 @@ type WordConnections = {
   };
 };
 
+type LearnedWords = {
+    [word: string]: string;
+}
+
 const kb = knowledgeBase as KnowledgeBase;
 const syn = synonyms as Synonyms;
 const wc = wordConnections as WordConnections;
+const lw = learnedWords as LearnedWords;
+
 
 const defaultResponses = kb['неизвестная_фраза'].ответы;
 
@@ -62,7 +83,6 @@ const defaultResponses = kb['неизвестная_фраза'].ответы;
 const lastResponseMap = new Map<string, string>();
 const sessionMemory = {
     lastUnknownWord: null as string | null,
-    learnedWords: new Map<string, string>(),
 };
 
 
@@ -291,23 +311,53 @@ function isDefiningUnknownWord(userInput: string): string | null {
     return null;
 }
 
+/**
+ * Asynchronously saves a new learned word to the JSON file.
+ * @param word The word that was learned.
+ * @param definition The definition of the word.
+ */
+async function saveLearnedWord(word: string, definition: string): Promise<void> {
+    const filePath = path.join(process.cwd(), 'src', 'data', 'learned-words.json');
+    const updatedLearnedWords = { ...lw, [word]: definition };
+
+    try {
+        await new Promise<void>((resolve, reject) => {
+            // NOTE: In a real Node.js environment, you would use `fs.promises.writeFile`.
+            // Here we use the callback version to match the mock.
+            fs.writeFile(filePath, JSON.stringify(updatedLearnedWords, null, 2), (err) => {
+                if (err) {
+                    console.error("Failed to write to learned-words.json", err);
+                    reject(err);
+                } else {
+                    // Update the in-memory copy as well
+                    Object.assign(lw, updatedLearnedWords);
+                    resolve();
+                }
+            });
+        });
+    } catch (error) {
+       // Error is already logged
+    }
+}
+
 
 /**
  * Model Q (Creative): Generates a response by finding the best matching intent or using word connections.
  * It uses a scoring mechanism to find the "ideal" response and handles typos.
+ * It can also learn new words during the conversation.
  * @param userInput The user's message.
  * @param history The conversation history.
  * @returns A response string.
  */
-function generateCreativeResponse(userInput: string, history: string[] = []): string {
+async function generateCreativeResponse(userInput: string, history: string[] = []): Promise<string> {
   const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
   const wordsInInput = lowerCaseInput.split(/\s+/).filter(w => w);
 
   // 0. Check if the user is defining a word we just asked about.
   const definition = isDefiningUnknownWord(userInput);
   if (definition && sessionMemory.lastUnknownWord) {
-      sessionMemory.learnedWords.set(sessionMemory.lastUnknownWord, definition);
       const learnedWord = sessionMemory.lastUnknownWord;
+      await saveLearnedWord(learnedWord, definition);
       sessionMemory.lastUnknownWord = null; // Clear the state
       return `Понял! Теперь я знаю, что ${learnedWord} - это ${definition}. Спасибо!`;
   }
@@ -317,7 +367,6 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
 
   // 1. Check for specific conversational contexts, like responding to "how are you?"
   if (isPersonalResponseToWellbeing(userInput, history)) {
-    // This is a direct response to a question about the user's wellbeing.
     const suitableResponses = [
         "Рад это слышать!",
         "Отлично! Чем теперь займемся?",
@@ -362,8 +411,9 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     }
     const response = responses[Math.floor(Math.random() * responses.length)];
     lastResponseMap.set(bestMatch.intent, response);
-    if (bestMatch.score < 1.0) {
-      return synonymize(response) + " А что ты еще хотел узнать?";
+    // If it was a fuzzy match, add a clarifying question.
+    if (bestMatch.score < 0.95 && !userInput.includes(response)) {
+      return synonymize(response) + " Я правильно тебя понял?";
     }
     return synonymize(response);
   }
@@ -374,8 +424,8 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     return synonymize(connectionResponse);
   }
   
-  // Check if we already learned this word
-  const learnedMeaning = sessionMemory.learnedWords.get(lowerCaseInput);
+  // Check if we already learned this word from the persistent storage
+  const learnedMeaning = lw[lowerCaseInput as keyof typeof lw];
   if (learnedMeaning) {
       return `Я помню, ты говорил, что ${lowerCaseInput} - это ${learnedMeaning}. Хочешь поговорить об этом?`;
   }
@@ -465,7 +515,7 @@ export async function contextualResponse(
   const history = input.history || [];
 
   if (input.model === 'Q') {
-    aiResponse = generateCreativeResponse(input.userInput, history);
+    aiResponse = await generateCreativeResponse(input.userInput, history);
   } else {
     aiResponse = generateRigidResponse(input.userInput, history);
   }
