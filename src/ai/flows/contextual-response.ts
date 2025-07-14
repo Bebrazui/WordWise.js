@@ -155,15 +155,11 @@ function generateCreativeResponse(userInput: string): string {
         return synonymize(responses[randomIndex]);
     }
 
-    // 3. If no good match, try to generate from word connections
+    // 3. If no good match, ALWAYS try to generate from word connections.
     const connectionResponse = generateConnectionResponse(userInput);
-    if (connectionResponse) {
-        return synonymize(connectionResponse);
-    }
-
-    // 4. Fallback to default response
-    const randomIndex = Math.floor(Math.random() * defaultResponses.length);
-    return synonymize(defaultResponses[randomIndex]);
+    // Even if the response is null, we pass it to synonymize, which will just return it.
+    // The final fallback will handle the null case.
+    return synonymize(connectionResponse || "Хм, интересный вопрос. Дай-ка подумать...");
 }
 
 /**
