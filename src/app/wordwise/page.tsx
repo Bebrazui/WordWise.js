@@ -167,6 +167,8 @@ export default function WordwisePage() {
     if (!wordToIndex.has(currentWord)) {
         currentWord = '<unk>';
         setOutput(`Начальное слово "${startWord}" не найдено. Используем "<unk>".`);
+    } else {
+        setOutput('');
     }
 
     let generatedSequence = [currentWord];
@@ -192,7 +194,7 @@ export default function WordwisePage() {
           break;
       }
     }
-    setOutput(`Сгенерированный текст: ${generatedSequence.join(' ')}`);
+    setOutput(prev => prev + `\nСгенерированный текст: ${generatedSequence.join(' ')}`);
     setStatus('Генерация текста завершена.');
   };
 
@@ -291,7 +293,7 @@ export default function WordwisePage() {
                       <p className="text-sm text-muted-foreground col-span-2 text-center">Инициализируйте модель, чтобы увидеть примеры.</p>
                     )}
                  </div>
-                 <div className="mt-4 p-4 bg-slate-100 rounded-md min-h-[100px] text-gray-700 font-mono text-sm">
+                 <div className="mt-4 p-4 bg-slate-100 rounded-md min-h-[100px] text-gray-700 font-mono text-sm whitespace-pre-wrap">
                     {output || 'Результат генерации появится здесь...'}
                  </div>
             </CardContent>
