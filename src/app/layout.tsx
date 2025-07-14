@@ -1,17 +1,9 @@
 import type {Metadata} from 'next';
 import './globals.css';
-import { Toaster } from "@/components/ui/toaster";
-import { Inter } from 'next/font/google';
-
-const inter = Inter({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-inter',
-})
 
 export const metadata: Metadata = {
-  title: 'WordWise Chat',
-  description: 'A simple chat with a limited vocabulary AI.',
+  title: 'WordWise.js',
+  description: 'A custom ML framework for training text-based AI in the browser.',
 };
 
 export default function RootLayout({
@@ -20,10 +12,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`dark ${inter.variable}`}>
-      <body className="font-sans antialiased">
+    <html lang="en">
+      <body>
         {children}
-        <Toaster />
       </body>
     </html>
   );
