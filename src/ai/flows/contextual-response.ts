@@ -1,6 +1,6 @@
 'use server';
 /**
- * @fileOverview A contextual response AI bot.
+ * @fileOverview A contextual response AI bot based on a knowledge base, synonyms, and word connections.
  *
  * - contextualResponse - A function that handles the response generation process.
  * - ContextualResponseInput - The input type for the contextualResponse function.
@@ -86,7 +86,7 @@ function synonymize(sentence: string): string {
  */
 function generateConnectionResponse(userInput: string): string | null {
   const lowerCaseInput = userInput.toLowerCase();
-  const words = lowerCaseInput.split(/\s+/).filter(w => w.length > 0); // Allow short words
+  const words = lowerCaseInput.split(/\s+/).filter(w => w.length > 0);
   const connections = (wordConnections as WordConnections).словарь_связей;
 
   for (const word of words) {
@@ -133,7 +133,6 @@ function generateConnectionResponse(userInput: string): string | null {
        }
     }
   }
-
 
   return null;
 }

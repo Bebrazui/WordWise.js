@@ -1,70 +1,57 @@
-'use server';
-/**
- * @fileOverview A creative, AI-powered response generator.
- *
- * - creativeResponse - A function that uses a Genkit flow to generate a response.
- * - CreativeResponseInput - The input type for the creativeResponse function.
- * - CreativeResponseOutput - The return type for the creativeResponse function.
- */
-
-import { ai } from '@/ai/genkit';
-import { z } from 'zod';
-import knowledgeBase from '@/data/knowledge-base.json';
-import synonyms from '@/data/synonyms.json';
-import wordConnections from '@/data/word-connections.json';
-
-const CreativeResponseInputSchema = z.object({
-  userInput: z
-    .string()
-    .describe('The user input to which the AI should respond creatively.'),
-});
-export type CreativeResponseInput = z.infer<typeof CreativeResponseInputSchema>;
-
-const CreativeResponseOutputSchema = z.object({
-  aiResponse: z.string().describe('The creative AI response.'),
-});
-export type CreativeResponseOutput = z.infer<
-  typeof CreativeResponseOutputSchema
->;
-
-const creativePrompt = ai.definePrompt({
-  name: 'creativeResponsePrompt',
-  input: { schema: CreativeResponseInputSchema },
-  output: { schema: CreativeResponseOutputSchema },
-  prompt: `You are a helpful and creative chatbot named WordWise. 
-  Your personality is witty and friendly.
-  You MUST answer in Russian.
-
-  Here is your knowledge base, which includes intents, phrases, and potential answers:
-  ${JSON.stringify(knowledgeBase)}
-
-  Here is a dictionary of synonyms you can use to make your language more varied:
-  ${JSON.stringify(synonyms)}
-
-  Here is a dictionary of word connections that describes how words relate to each other:
-  ${JSON.stringify(wordConnections)}
-
-  Your task is to respond to the user's input: "{{userInput}}".
-
-  Instead of just picking a pre-written answer, you should deeply analyze the user's input and use all the provided data (knowledge base, synonyms, word connections) to formulate a unique, fitting, and creative response. Find the best possible answer, even if it's not an exact match. Be conversational.
-  `,
-});
-
-const creativeResponseFlow = ai.defineFlow(
-  {
-    name: 'creativeResponseFlow',
-    inputSchema: CreativeResponseInputSchema,
-    outputSchema: CreativeResponseOutputSchema,
+{
+  "name": "nextn",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack -p 9002",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
   },
-  async (input) => {
-    const { output } = await creativePrompt(input);
-    return output!;
+  "dependencies": {
+    "@hookform/resolvers": "4.1.3",
+    "@radix-ui/react-accordion": "1.2.3",
+    "@radix-ui/react-alert-dialog": "1.1.6",
+    "@radix-ui/react-avatar": "1.1.3",
+    "@radix-ui/react-checkbox": "1.1.4",
+    "@radix-ui/react-collapsible": "1.1.11",
+    "@radix-ui/react-dialog": "1.1.6",
+    "@radix-ui/react-dropdown-menu": "2.1.6",
+    "@radix-ui/react-label": "2.1.2",
+    "@radix-ui/react-menubar": "1.1.6",
+    "@radix-ui/react-popover": "1.1.6",
+    "@radix-ui/react-progress": "1.1.2",
+    "@radix-ui/react-radio-group": "1.2.3",
+    "@radix-ui/react-scroll-area": "1.2.3",
+    "@radix-ui/react-select": "2.1.6",
+    "@radix-ui/react-separator": "1.1.2",
+    "@radix-ui/react-slider": "1.2.3",
+    "@radix-ui/react-switch": "1.1.3",
+    "@radix-ui/react-tabs": "1.1.3",
+    "@radix-ui/react-toast": "1.2.6",
+    "@radix-ui/react-tooltip": "1.1.8",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^3.6.0",
+    "embla-carousel-react": "^8.6.0",
+    "lucide-react": "^0.475.0",
+    "next": "15.3.3",
+    "react": "^18.3.1",
+    "react-day-picker": "^8.10.1",
+    "react-dom": "^18.3.1",
+    "react-hook-form": "^7.54.2",
+    "recharts": "^2.15.1",
+    "tailwind-merge": "^3.0.1",
+    "tailwindcss-animate": "^1.0.7",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "postcss": "^8",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5"
   }
-);
-
-export async function creativeResponse(
-  input: CreativeResponseInput
-): Promise<CreativeResponseOutput> {
-  const result = await creativeResponseFlow(input);
-  return result;
 }
