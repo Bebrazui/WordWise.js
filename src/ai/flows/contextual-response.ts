@@ -8,6 +8,8 @@
  */
 
 import {z} from 'zod';
+import knowledgeBase from '@/data/knowledge-base.json';
+
 
 const ContextualResponseInputSchema = z.object({
   userInput: z
@@ -27,22 +29,6 @@ export type ContextualResponseOutput = z.infer<
 
 // --- Start of the bot's "brain" ---
 
-// A very simple knowledge base.
-// The key is the keyword to look for, and the value is the response.
-const knowledgeBase: {[key: string]: string} = {
-  привет: 'Привет! Чем я могу помочь?',
-  здравствуй: 'Здравствуй!',
-  пока: 'До свидания!',
-  'до свидания': 'Пока! Удачи!',
-  'как дела': 'У меня все хорошо, я же программа. А у тебя?',
-  'кто ты': 'Я — WordWise, очень простой бот.',
-  спасибо: 'Пожалуйста!',
-  помощь: 'Я еще не умею помогать, но я учусь.',
-  марс: 'Марс - это красная планета.',
-  погода: 'Я не знаю какая погода, я же в компьютере.',
-  шутку: 'Колобок повесился.',
-};
-
 // A default response if no keyword is found.
 const defaultResponse = 'Интересная мысль. Я не совсем понимаю.';
 
@@ -57,7 +43,7 @@ function generateResponse(userInput: string): string {
   // Find a keyword that is included in the user's input.
   for (const keyword in knowledgeBase) {
     if (lowerCaseInput.includes(keyword)) {
-      return knowledgeBase[keyword];
+      return (knowledgeBase as Record<string, string>)[keyword];
     }
   }
 
