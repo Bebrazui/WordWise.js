@@ -146,29 +146,53 @@ function generateConnectionResponse(userInput: string): string | null {
  * @returns A response string.
  */
 function generateResponse(userInput: string): string {
-  const lowerCaseInput = userInput.toLowerCase();
+  const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
+  const wordsInInput = lowerCaseInput.split(/\s+/);
 
   const intents = Object.keys(knowledgeBase) as Array<
     keyof typeof knowledgeBase
   >;
 
+  let bestMatch: { intent: string, score: number } | null = null;
+
   for (const intent of intents) {
-    // Skip the default case, we'll handle it last
     if (intent === 'неизвестная_фраза') continue;
 
     const intentData = (knowledgeBase as KnowledgeBase)[intent];
-    const foundPhrase = intentData.фразы.find(phrase =>
-      lowerCaseInput.includes(phrase.toLowerCase())
-    );
+    
+    // Check for exact or very close match first
+    const perfectMatch = intentData.фразы.find(phrase => lowerCaseInput === phrase.toLowerCase());
+    if(perfectMatch){
+        bestMatch = { intent, score: 100 };
+        break; // Perfect match found, no need to check others
+    }
 
-    if (foundPhrase) {
-      const responses = intentData.ответы;
-      // Return a random response from the list
-      const randomIndex = Math.floor(Math.random() * responses.length);
-      const chosenResponse = responses[randomIndex];
-      return synonymize(chosenResponse);
+    // If not a perfect match, check for keywords
+    let score = 0;
+    intentData.фразы.forEach(phrase => {
+        const phraseWords = phrase.toLowerCase().split(/\s+/);
+        const commonWords = phraseWords.filter(word => wordsInInput.includes(word));
+        // Simple scoring: prioritize longer matching phrases
+        if (commonWords.length > 0) {
+            score = Math.max(score, commonWords.length / phraseWords.length);
+        }
+    });
+
+    if (bestMatch === null || score > bestMatch.score) {
+        if(score > 0.5) { // Require a reasonable match
+            bestMatch = { intent, score };
+        }
     }
   }
+
+  if (bestMatch) {
+    const intentData = (knowledgeBase as KnowledgeBase)[bestMatch.intent];
+    const responses = intentData.ответы;
+    const randomIndex = Math.floor(Math.random() * responses.length);
+    const chosenResponse = responses[randomIndex];
+    return synonymize(chosenResponse);
+  }
+
 
   // If no intent was matched, try to generate from connections
   const connectionResponse = generateConnectionResponse(userInput);
