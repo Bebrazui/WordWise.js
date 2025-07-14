@@ -6,10 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Settings, BrainCircuit, Bot } from 'lucide-react';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import { BrainCircuit, Bot } from 'lucide-react';
 import Link from 'next/link';
 
 import { useTrainedModel } from '@/hooks/use-trained-model';
@@ -53,7 +50,7 @@ export default function Home() {
         currentWord = '<unk>';
     }
 
-    let generatedSequence = [currentWord];
+    let generatedSequence = [startWord]; // Начинаем последовательность с полного ввода пользователя
     let h = trainedModel.initializeStates(1).h0;
     let c = trainedModel.initializeStates(1).c0;
 
@@ -69,7 +66,8 @@ export default function Home() {
 
       if (currentWord === '<unk>') break;
     }
-    return generatedSequence.join(' ');
+    // Убираем первое слово (которое было затравкой) и объединяем
+    return generatedSequence.slice(1).join(' ');
   };
 
 
