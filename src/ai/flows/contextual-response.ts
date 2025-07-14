@@ -236,6 +236,25 @@ function levenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
+const personalPronounMarkers = ["я", "у меня", "мой", "мне", "я сам"];
+const questionAboutWellbeing = ["как дела", "как ты", "как поживаешь", "как твое"];
+
+/**
+ * Checks if the user is likely responding to a question about their well-being.
+ * @param userInput The user's current message.
+ * @param history The conversation history.
+ * @returns true if it's likely a personal response to a well-being question.
+ */
+function isPersonalResponseToWellbeing(userInput: string, history: string[]): boolean {
+    const lowerInput = userInput.toLowerCase();
+    const lastBotMessage = history.length > 0 ? history[history.length - 1].toLowerCase() : "";
+
+    const isPersonal = personalPronounMarkers.some(marker => lowerInput.startsWith(marker));
+    const wasAsked = questionAboutWellbeing.some(q => lastBotMessage.includes(q));
+
+    return isPersonal && wasAsked;
+}
+
 
 /**
  * Model Q (Creative): Generates a response by finding the best matching intent or using word connections.
@@ -248,7 +267,20 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
   const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
   const wordsInInput = lowerCaseInput.split(/\s+/).filter(w => w);
 
-  // 1. Try to find a direct or fuzzy match in the knowledge base first
+  // 1. Check for specific conversational contexts, like responding to "how are you?"
+  if (isPersonalResponseToWellbeing(userInput, history)) {
+    let responses = kb['как_дела'].ответы;
+    // Find a suitable response, maybe one that acknowledges the user's answer
+     const suitableResponses = [
+        "Рад это слышать!",
+        "Отлично! Чем теперь займемся?",
+        "Здорово! Если что-то понадобится, я здесь.",
+        "Это хорошо. Что дальше по плану?",
+     ];
+     return synonymize(suitableResponses[Math.floor(Math.random() * suitableResponses.length)]);
+  }
+
+  // 2. Try to find a direct or fuzzy match in the knowledge base first
   let bestMatch: { intent: string; score: number } | null = null;
   for (const intent in kb) {
     if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
@@ -281,13 +313,13 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     return synonymize(response);
   }
 
-  // 2. If no direct match, get creative with word connections.
+  // 3. If no direct match, get creative with word connections.
   const connectionResponse = generateConnectionResponse(userInput);
   if (connectionResponse) {
     return synonymize(connectionResponse);
   }
 
-  // 3. Fallback to a more creative, thoughtful default response.
+  // 4. Fallback to a more creative, thoughtful default response.
   const thoughtfulResponses = [
     "Это интересный поворот. Дай мне секунду, чтобы обдумать это.",
     "Хм, ты затронул любопытную тему. Я пытаюсь найти связи...",
