@@ -202,7 +202,7 @@ export class LSTMCell extends Layer {
      */
     constructor(inputSize: number, hiddenSize: number) {
         super();
-        // Инициализация весов гейтов
+        // Инициализация весов гейтов методом Glorot/Xavier
         const limit_x = Math.sqrt(6 / (inputSize + hiddenSize));
         const limit_h = Math.sqrt(6 / (hiddenSize + hiddenSize));
 

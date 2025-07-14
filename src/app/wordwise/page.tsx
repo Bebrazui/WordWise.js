@@ -273,7 +273,7 @@ export default function WordwisePage() {
             <CardHeader>
               <CardTitle>Шаг 3: Проверьте генерацию</CardTitle>
                <CardDescription>Здесь можно быстро проверить, как модель генерирует текст. Кнопки обновятся после инициализации.</CardDescription>
-            </CardHeader>
+            </Header>
             <CardContent className="space-y-4">
                  <div className="grid grid-cols-2 gap-2">
                     {sampleWords.length > 0 ? (
