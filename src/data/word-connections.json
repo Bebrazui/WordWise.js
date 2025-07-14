@@ -265,6 +265,58 @@
   ],
   "пушистый": [
     {"value": "флуффи", "weight": 0.9, "type": "synonym"}
+  ],
+  "хочу": [
+    {"value": "желать", "weight": 1.0, "type": "is_a"},
+    {"value": ["цель", "мечта"], "weight": 0.7, "type": "related_to"}
+  ],
+  "могу": [
+    {"value": "способность", "weight": 1.0, "type": "is_a"},
+    {"value": ["действие", "умение"], "weight": 0.7, "type": "related_to"}
+  ],
+  "искать": [
+    {"value": "действие", "weight": 1.0, "type": "is_a"},
+    {"value": ["информация", "решение"], "weight": 0.8, "type": "object_of_action"}
+  ],
+  "играть": [
+    {"value": "действие", "weight": 1.0, "type": "is_a"},
+    {"value": ["игра", "развлечение"], "weight": 0.8, "type": "related_to"}
+  ],
+  "работать": [
+    {"value": "действие", "weight": 1.0, "type": "is_a"},
+    {"value": ["профессия", "задача", "деньги"], "weight": 0.7, "type": "related_to"}
+  ],
+  "отдыхать": [
+    {"value": "действие", "weight": 1.0, "type": "is_a"},
+    {"value": ["сон", "отпуск", "расслабление"], "weight": 0.7, "type": "related_to"}
+  ],
+  "есть": [
+    {"value": "действие", "weight": 1.0, "type": "is_a"},
+    {"value": ["еда", "голод"], "weight": 0.8, "type": "related_to"}
+  ],
+  "пить": [
+    {"value": "действие", "weight": 1.0, "type": "is_a"},
+    {"value": ["вода", "напиток", "жажда"], "weight": 0.8, "type": "related_to"}
+  ],
+  "дом": [
+    {"value": "здание", "weight": 1.0, "type": "is_a"},
+    {"value": ["семья", "уют"], "weight": 0.7, "type": "related_to"}
+  ],
+  "деньги": [
+    {"value": "ресурс", "weight": 1.0, "type": "is_a"},
+    {"value": ["покупка", "работа"], "weight": 0.8, "type": "related_to"}
+  ],
+  "проблема": [
+    {"value": "ситуация", "weight": 1.0, "type": "is_a"},
+    {"value": "решение", "weight": 0.9, "type": "requires"},
+    {"value": "трудность", "weight": 0.8, "type": "synonym"}
+  ],
+  "решение": [
+    {"value": "ответ", "weight": 1.0, "type": "is_a"},
+    {"value": "проблема", "weight": 0.9, "type": "solves"}
+  ],
+  "идея": [
+    {"value": "мысль", "weight": 1.0, "type": "is_a"},
+    {"value": ["креативность", "инновация"], "weight": 0.7, "type": "related_to"}
   ]
 }
-
