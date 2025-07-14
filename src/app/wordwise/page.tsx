@@ -29,6 +29,15 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 
+const defaultCorpus = `вопрос: привет ответ: привет как твои дела
+вопрос: как дела ответ: у меня все отлично спасибо а у тебя
+вопрос: как твои дела ответ: неплохо спасибо что спросил
+вопрос: чем занимаешься ответ: читаю интересную книгу о космосе
+вопрос: какая сегодня погода ответ: сегодня солнечно и тепло прекрасный день
+вопрос: что нового ответ: ничего особенного все по-старому
+вопрос: у тебя есть хобби ответ: да я люблю программировать и создавать новое
+вопрос: добрый день ответ: и вам добрый день`;
+
 export default function WordwisePage() {
   const [output, setOutput] = useState<string>('');
   const [latestPredictions, setLatestPredictions] = useState<Prediction[]>([]);
@@ -38,7 +47,7 @@ export default function WordwisePage() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [isTrained, setIsTrained] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
-  const [textCorpus, setTextCorpus] = useState("вопрос: привет ответ: привет как дела\nвопрос: как дела ответ: все хорошо спасибо");
+  const [textCorpus, setTextCorpus] = useState(defaultCorpus);
   const [sampleWords, setSampleWords] = useState<string[]>([]);
   
   const [learningRate, setLearningRate] = useState(0.01);
@@ -207,7 +216,7 @@ export default function WordwisePage() {
       h = nextH;
       c = nextC;
 
-      const { chosenWord, topPredictions } = getWordFromPrediction(predictionLogits, indexToWord, temperature);
+      const { chosenWord, topPredictions } = getWordFromPrediction(predictionLogits, indexToWord, temperature, generatedSequence);
       setLatestPredictions(topPredictions);
       
       if (chosenWord === 'вопрос' || chosenWord === 'ответ') {
@@ -498,5 +507,3 @@ a.href = url;
     </div>
   );
 }
-
-    
