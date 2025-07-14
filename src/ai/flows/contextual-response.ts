@@ -72,16 +72,12 @@ const lastResponseMap = new Map<string, string>();
  */
 function calculateExpression(expression: string): number | null {
   try {
+    // Improved regex to better extract expressions from text
     const sanitizedExpression = expression.replace(/[^-()\d/*+.]/g, ' ').trim();
     if (!sanitizedExpression) {
       return null;
     }
     
-    // Check for invalid characters that weren't just whitespace
-    if (/[^-()\d/*+.\s]/.test(expression)) {
-        // if there are other characters than math and spaces, it's not a pure expression
-    }
-
     // eslint-disable-next-line no-new-func
     const result = new Function(`return ${sanitizedExpression}`)();
 
@@ -128,13 +124,16 @@ function synonymize(sentence: string): string {
  * @returns A response string.
  */
 function generateRigidResponse(userInput: string, history: string[] = []): string {
-    const mathExpressionRegex = /((?:\d|\.)+\s*[+\-*/]\s*(?:\d|\.)+)/g;
-    const potentialExpression = userInput.match(mathExpressionRegex)?.[0];
+    const mathExpressionRegex = /(?:реши|посчитай|сколько будет)\s*([0-9+\-*/().\s]+)|((?:\d|\.)+\s*[+\-*/]\s*(?:\d|\.)+)/gi;
+    const match = mathExpressionRegex.exec(userInput);
 
-    if (potentialExpression) {
-        const result = calculateExpression(potentialExpression);
-        if (result !== null) {
-            return `Результат: ${result}`;
+    if (match) {
+        const expression = match[1] || match[2];
+        if (expression) {
+            const result = calculateExpression(expression);
+            if (result !== null) {
+                return `Результат: ${result}`;
+            }
         }
     }
 
@@ -143,58 +142,46 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
 
     let bestMatch: { intent: string; score: number } | null = null;
     
-    const textToAnalyze = [userInput, ...history].join(' ');
-    const lowerCaseText = textToAnalyze.toLowerCase().replace(/[.,!?]/g, '');
-    const wordsInText = new Set(lowerCaseText.split(/\s+/).filter(w => w));
-
+    // Use history for context, but prioritize the current user input.
+    const contextText = [...history, userInput].join(' ');
+    const lowerCaseContext = contextText.toLowerCase().replace(/[.,!?]/g, '');
+    const wordsInContext = new Set(lowerCaseContext.split(/\s+/).filter(w => w));
 
     // Calculate best match from knowledge base
     for (const intent in kb) {
         if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
 
         const intentData = kb[intent];
-        let highestScoreForIntent = 0;
+        let maxScoreForIntent = 0;
 
+        // Score based on direct match with user's last message
         for (const phrase of intentData.фразы) {
             const lowerPhrase = phrase.toLowerCase();
             const phraseWords = new Set(lowerPhrase.split(/\s+/).filter(Boolean));
             
-            const intersection = new Set([...phraseWords].filter(x => {
-                for (const inputWord of wordsInInput) {
-                    if (inputWord.includes(x) || x.includes(inputWord)) {
-                        return true;
-                    }
-                }
-                return false;
-            }));
-
+            const intersection = new Set([...phraseWords].filter(x => wordsInInput.has(x)));
             const union = new Set([...phraseWords, ...wordsInInput]);
             const score = union.size > 0 ? intersection.size / union.size : 0;
             
-            if (score > highestScoreForIntent) {
-                highestScoreForIntent = score;
+            if (score > maxScoreForIntent) {
+                maxScoreForIntent = score;
             }
         }
         
-        const contextIntersection = new Set([...wordsInText].filter(x => {
-             for (const phrase of intentData.фразы) {
-                if(phrase.toLowerCase().includes(x)) return true;
-             }
-             return false;
-        }));
-        const contextScore = contextIntersection.size / wordsInText.size;
+        // Boost score based on context from history
+        const contextIntersection = new Set([...intentData.фразы.flatMap(p => p.toLowerCase().split(/\s+/))].filter(x => wordsInContext.has(x)));
+        const contextScore = wordsInContext.size > 0 ? contextIntersection.size / wordsInContext.size : 0;
 
-
-        const finalScore = (highestScoreForIntent * 0.7) + (contextScore * 0.3);
+        // Give much higher weight to the last message
+        const finalScore = (maxScoreForIntent * 0.8) + (contextScore * 0.2);
 
         if (finalScore > (bestMatch?.score ?? 0)) {
             bestMatch = { intent, score: finalScore };
         }
     }
 
-
-    // Decide if the match is good enough
-    if (bestMatch && bestMatch.score > 0.1) {
+    // Adjust threshold for better accuracy
+    if (bestMatch && bestMatch.score > 0.15) {
         let responses = kb[bestMatch.intent].ответы;
         // Avoid repeating the last response for this intent
         const lastResponse = lastResponseMap.get(bestMatch.intent);
@@ -269,27 +256,21 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     const intentData = kb[intent];
     for (const phrase of intentData.фразы) {
       const lowerPhrase = phrase.toLowerCase();
-      const phraseWords = lowerPhrase.split(/\s+/).filter(Boolean);
-      let currentScore = 0;
       
-      for(const inputWord of wordsInInput) {
-        for(const phraseWord of phraseWords) {
-            const distance = levenshteinDistance(inputWord, phraseWord);
-            const threshold = phraseWord.length > 4 ? 2 : 1;
-            if (distance <= threshold) {
-                currentScore++;
-            }
-        }
-      }
-
-      if (currentScore > (bestMatch?.score ?? 0)) {
-        bestMatch = { intent, score: currentScore };
+      const distance = levenshteinDistance(lowerCaseInput, lowerPhrase);
+      // More forgiving for longer phrases
+      const threshold = Math.floor(lowerPhrase.length / 4); 
+      if (distance <= threshold) {
+          const score = 1 - (distance / lowerPhrase.length);
+          if (score > (bestMatch?.score ?? 0)) {
+            bestMatch = { intent, score };
+          }
       }
     }
   }
 
   // If a reasonably good match is found, use it. This makes the bot feel responsive to direct questions.
-  if (bestMatch && bestMatch.score > 0) {
+  if (bestMatch && bestMatch.score > 0.7) {
     let responses = kb[bestMatch.intent].ответы;
     const lastResponse = lastResponseMap.get(bestMatch.intent);
     if (lastResponse && responses.length > 1) {
