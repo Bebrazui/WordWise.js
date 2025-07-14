@@ -79,7 +79,7 @@ type LearnedWords = {
 
 type Morphology = {
     prefixes: string[];
-    suffixes: string[];
+    suffixes: Record<string, string[]>;
     endings: string[];
 };
 
@@ -370,12 +370,14 @@ function generateConnectionResponse(normalizedInput: string): string | null {
         return foundFacts[0].fact;
     }
 
-    let combinedResponse = 'Если я правильно тебя понимаю, ты говоришь о нескольких вещах. ';
-    const factStrings = foundFacts.slice(0, 2).map(f => f.fact.replace(/.$/, '')); // Combine top 2 facts
-    combinedResponse += factStrings.join(' и ');
-    combinedResponse += '. Это довольно интересное сочетание.';
+    // Combine multiple facts into a coherent sentence
+    if (foundFacts.length > 1) {
+        const fact1 = foundFacts[0].fact.replace(/\.$/, '');
+        const fact2 = foundFacts[1].fact.toLowerCase();
+        return `${fact1}, что, в свою очередь, связано с понятием "${fact2.split(' ')[0]}". Это интересная взаимосвязь.`;
+    }
 
-    return combinedResponse;
+    return null;
 }
 
 // --- Pipeline Stage 7: Observer & Smart Fallback ---
@@ -386,10 +388,17 @@ function generateConnectionResponse(normalizedInput: string): string | null {
  */
 function getFallbackResponse(normalizedInput: string): string {
     const wordsInInput = normalizedInput.split(/\s+/).filter(w => w);
-    const mostComplexWord = wordsInInput.sort((a, b) => b.length - a.length)[0] || 'это';
+    // Try to find a word that is not a known synonym or in the knowledge base
+    let unknownWord = wordsInInput.find(w => !syn[w] && !Object.keys(kb).some(k => kb[k].фразы.includes(w)));
+    
+    // If all words are known, pick the most complex one
+    if (!unknownWord) {
+        unknownWord = wordsInInput.sort((a, b) => b.length - a.length)[0] || 'это';
+    }
+
 
     const thoughtfulResponses = [
-        `Я размышляю над словом "${mostComplexWord}"... и что оно может означать в этом контексте. Можешь объяснить?`,
+        `Я размышляю над словом "${unknownWord}"... и что оно может означать в этом контексте. Можешь объяснить?`,
         'Это сложный вопрос. Мои алгоритмы ищут наиболее подходящий ответ, но пока безуспешно. Попробуешь перефразировать?',
     ];
     let responses = thoughtfulResponses;
@@ -465,7 +474,7 @@ async function generateCreativeResponse(
     return `Понял! Теперь я знаю, что ${learnedWord} - это ${definition}. Спасибо!`;
   }
   // Reset if user has moved on from defining a word
-  if (!userInput.startsWith(sessionMemory.lastUnknownWord || '___')) {
+  if (sessionMemory.lastUnknownWord && !userInput.toLowerCase().startsWith(sessionMemory.lastUnknownWord)) {
       sessionMemory.lastUnknownWord = null;
   }
   
@@ -484,7 +493,7 @@ async function generateCreativeResponse(
   // Stage 5: Knowledge Base Matcher (The Strategist)
   const bestMatch = findBestIntentMatch(normalizedInput);
 
-  if (bestMatch && bestMatch.score > 0.5) { // Confidence threshold of 50%
+  if (bestMatch && bestMatch.score > 0.6) { // Confidence threshold
     let responses = kb[bestMatch.intent].ответы;
     // Avoid repetition
     const lastResponse = lastResponseMap.get(bestMatch.intent);
@@ -495,7 +504,7 @@ async function generateCreativeResponse(
     lastResponseMap.set(bestMatch.intent, response);
     
     // Clarify only if the match was fuzzy (not a direct, high-confidence match)
-    if (bestMatch.score < 0.95 && bestMatch.score > 0.5) {
+    if (bestMatch.score < 0.95 && bestMatch.score > 0.6) {
       return synonymize(response) + ' Я правильно тебя понял?';
     }
     return synonymize(response);

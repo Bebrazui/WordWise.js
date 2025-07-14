@@ -1,5 +1,20 @@
 
 {
+  "земля": [
+    {"value": "планета", "weight": 1.0, "type": "is_a"},
+    {"value": "население", "weight": 0.8, "type": "has_property"},
+    {"value": ["вода", "воздух"], "weight": 0.7, "type": "consists_of"}
+  ],
+  "луна": [
+    {"value": "спутник", "weight": 1.0, "type": "is_a"},
+    {"value": "ночь", "weight": 0.8, "type": "related_to"},
+    {"value": "сыр", "weight": 0.2, "type": "association"}
+  ],
+  "любовь": [
+    {"value": "чувство", "weight": 1.0, "type": "is_a"},
+    {"value": ["забота", "привязанность"], "weight": 0.9, "type": "manifestation_of"},
+    {"value": "ненависть", "weight": 0.9, "type": "antonym"}
+  ],
   "животное": [
     {"value": ["существо", "организм"], "weight": 1.0, "type": "is_a"},
     {"value": ["голова", "лапы", "хвост"], "weight": 0.8, "type": "has_parts"},
