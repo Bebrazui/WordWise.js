@@ -66,9 +66,9 @@ export function imageToTensor(imageUrl: string, width: number, height: number): 
  * @param inputTensors Array of image tensors.
  * @param targetTensors Array of target tensors (one-hot).
  * @param batchSize The desired batch size.
- * @returns An array of batches.
+ * @returns An array of batches (plain objects for worker compatibility).
  */
-export function createImageBatches(inputTensors: Tensor[], targetTensors: Tensor[], batchSize: number): { inputs: Tensor, targets: Tensor }[] {
+export function createImageBatches(inputTensors: Tensor[], targetTensors: Tensor[], batchSize: number): { inputs: { data: Float32Array, shape: number[] }, targets: { data: Float32Array, shape: number[] } }[] {
   if (inputTensors.length !== targetTensors.length) {
     throw new Error("Input and target tensors must have the same length.");
   }
@@ -106,10 +106,10 @@ export function createImageBatches(inputTensors: Tensor[], targetTensors: Tensor
       batchedTargetData.set(target.data, j * target.size);
     }
     
-    const batchedInputTensor = new Tensor(batchedInputData, [actualBatchSize, channels, height, width]);
-    const batchedTargetTensor = new Tensor(batchedTargetData, [actualBatchSize, numClasses]);
+    const batchedInput = { data: batchedInputData, shape: [actualBatchSize, channels, height, width] };
+    const batchedTarget = { data: batchedTargetData, shape: [actualBatchSize, numClasses] };
 
-    batches.push({ inputs: batchedInputTensor, targets: batchedTargetTensor });
+    batches.push({ inputs: batchedInput, targets: batchedTarget });
   }
   
   return batches;

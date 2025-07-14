@@ -298,6 +298,29 @@ export class Tensor {
     return new Tensor(resultData, [cols, rows]);
   }
 
+  /**
+   * Изменяет форму тензора без изменения данных.
+   * @param newShape Новая форма.
+   * @returns Новый тензор с измененной формой.
+   */
+  reshape(newShape: number[]): Tensor {
+    const newSize = newShape.reduce((a, b) => a * b, 1);
+    if (this.size !== newSize) {
+      throw new Error(`Cannot reshape tensor of size ${this.size} into shape [${newShape.join(',')}] with size ${newSize}`);
+    }
+    // Создаем новый тензор, но используем тот же буфер данных
+    const result = new Tensor(this.data, newShape);
+    result.name = this.name;
+
+    if (!this._isDetached) {
+      result._parents.push({
+        tensor: this,
+        gradFn: (grad) => grad.reshape(this.shape) // Градиент должен быть преобразован обратно в исходную форму
+      });
+    }
+    return result;
+  }
+
   // --- Более сложные операции (для активаций и потерь) ---
 
   /**
@@ -451,4 +474,3 @@ export class Tensor {
     return `Tensor(data=[${this.data.map(d => d.toFixed(4)).join(', ')}], shape=[${this.shape.join(', ')}])`;
   }
 }
-

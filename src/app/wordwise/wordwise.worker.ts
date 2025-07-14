@@ -133,15 +133,19 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
     let epochLoss = 0;
     
     for (const batch of batches) {
+       // Re-create Tensors from plain objects
+      const batchInputs = new Tensor(batch.inputs.data, batch.inputs.shape);
+      const batchTargets = new Tensor(batch.targets.data, batch.targets.shape);
+
       let predictionLogits;
       if (model.type === 'text') {
-        let {h0: h, c0: c} = (model as WordWiseModel).initializeStates(batch.inputs.shape[0]);
-        predictionLogits = model.forward(batch.inputs, h, c).outputLogits;
+        let {h0: h, c0: c} = (model as WordWiseModel).initializeStates(batchInputs.shape[0]);
+        predictionLogits = model.forward(batchInputs, h, c).outputLogits;
       } else { // image model
-        predictionLogits = (model as ImageWiseModel).forward(batch.inputs).outputLogits;
+        predictionLogits = (model as ImageWiseModel).forward(batchInputs).outputLogits;
       }
       
-      const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batch.targets);
+      const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batchTargets);
       // Ensure loss is a single number before adding
       if(lossTensor.data.length === 1) {
         epochLoss += lossTensor.data[0];
