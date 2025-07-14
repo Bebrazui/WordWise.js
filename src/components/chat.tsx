@@ -114,7 +114,7 @@ export function Chat() {
                 className="gap-2 pointer-events-none"
             >
                 <BrainCircuit className="h-4 w-4"/>
-                Bot Q 0.2
+                Bot Q 0.2 (Quantum)
             </Button>
         </div>
       </header>
