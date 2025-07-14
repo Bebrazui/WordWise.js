@@ -6,9 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { BrainCircuit, Bot } from 'lucide-react';
+import { BrainCircuit, Bot, Eye, EyeOff } from 'lucide-react';
 import Link from 'next/link';
 import { PredictionVisualizer, Prediction } from '@/components/ui/prediction-visualizer';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 import { useTrainedModel } from '@/hooks/use-trained-model';
 import { Tensor } from '@/lib/tensor';
@@ -24,6 +25,7 @@ export default function Home() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [latestPredictions, setLatestPredictions] = useState<Prediction[]>([]);
+  const [showPredictions, setShowPredictions] = useState(true);
   const { trainedModel, vocabData, temperature } = useTrainedModel();
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -70,7 +72,7 @@ export default function Home() {
       setLatestPredictions(topPredictions);
       
       if (chosenWord === 'вопрос' || chosenWord === 'ответ') {
-          await new Promise(resolve => setTimeout(resolve, 50)); // Небольшая пауза для рендеринга
+          await new Promise(resolve => setTimeout(resolve, 50));
           continue;
       };
 
@@ -88,10 +90,12 @@ export default function Home() {
 
       if (chosenWord === '<unk>') break;
 
-      await new Promise(resolve => setTimeout(resolve, 150)); // Задержка для эффекта печатания
+      await new Promise(resolve => setTimeout(resolve, 150));
     }
     
-    setLatestPredictions([]); // Очищаем визуализатор после генерации
+    if (!showPredictions) {
+        setLatestPredictions([]);
+    }
   };
 
 
@@ -131,11 +135,30 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Link href="/wordwise" passHref>
-              <Button variant="ghost" size="icon" aria-label="WordWise.js Training">
-                <BrainCircuit className="w-5 h-5" />
-              </Button>
-            </Link>
+            <TooltipProvider>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                         <Button variant="ghost" size="icon" aria-label="Toggle Predictions" onClick={() => setShowPredictions(p => !p)}>
+                            {showPredictions ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
+                         </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>{showPredictions ? 'Скрыть монитор предсказаний' : 'Показать монитор предсказаний'}</p>
+                    </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Link href="/wordwise" passHref>
+                          <Button variant="ghost" size="icon" aria-label="WordWise.js Training">
+                            <BrainCircuit className="w-5 h-5" />
+                          </Button>
+                        </Link>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>Перейти в тренажерный зал</p>
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
           </div>
         </CardHeader>
         <CardContent className="flex-grow p-0">
@@ -171,7 +194,7 @@ export default function Home() {
           </ScrollArea>
         </CardContent>
         <div className="p-4 border-t bg-background">
-          {latestPredictions.length > 0 && <PredictionVisualizer predictions={latestPredictions} />}
+          {showPredictions && <PredictionVisualizer predictions={latestPredictions} />}
           <form onSubmit={handleSubmit} className="flex gap-2 mt-2">
             <Input
               value={input}

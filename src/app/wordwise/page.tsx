@@ -1,10 +1,10 @@
-// src/app/wordwise/page.tsx
+
 "use client";
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Info, Upload, Download } from 'lucide-react';
+import { Info, Upload, Download, Settings, TestTube2 } from 'lucide-react';
 
 import { Tensor } from '../../lib/tensor';
 import { crossEntropyLossWithSoftmaxGrad } from '../../lib/layers';
@@ -17,12 +17,17 @@ import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Slider } from '@/components/ui/slider';
 import { PredictionVisualizer, Prediction } from '@/components/ui/prediction-visualizer';
 import { useToast } from '@/hooks/use-toast';
-
 import { useTrainedModel } from '@/hooks/use-trained-model';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
 
 export default function WordwisePage() {
   const [output, setOutput] = useState<string>('');
@@ -38,6 +43,11 @@ export default function WordwisePage() {
   const [learningRate, setLearningRate] = useState(0.01);
   const [numEpochs, setNumEpochs] = useState(500);
 
+  // Model architecture state
+  const [embeddingDim, setEmbeddingDim] = useState(64);
+  const [hiddenSize, setHiddenSize] = useState(128);
+  const [batchSize, setBatchSize] = useState(4);
+
   const { setTrainedModel, setVocabData, temperature, setTemperature } = useTrainedModel();
   const { toast } = useToast();
   
@@ -46,10 +56,6 @@ export default function WordwisePage() {
   const vocabDataRef = useRef<{ vocab: string[]; wordToIndex: Map<string, number>; indexToWord: Map<number, string>; vocabSize: number } | null>(null);
   const trainingStopFlag = useRef(false);
 
-  const embeddingDim = 64;
-  const hiddenSize = 128;
-  const batchSize = 4;
-  
   const initializeWordWise = useCallback(() => {
     try {
       setStatus('Инициализация WordWise.js...');
@@ -72,12 +78,12 @@ export default function WordwisePage() {
       setStatus('Готов к обучению.');
       setIsInitialized(true);
       setLatestPredictions([]);
-      setTrainedModel(null); // Сбрасываем обученную модель в глобальном состоянии
+      setTrainedModel(null);
     } catch (error) {
       console.error("Ошибка инициализации:", error);
       setStatus(`Ошибка инициализации: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [textCorpus, learningRate, setVocabData, setTrainedModel]);
+  }, [textCorpus, learningRate, embeddingDim, hiddenSize, setVocabData, setTrainedModel]);
   
   const stopTraining = () => {
     trainingStopFlag.current = true;
@@ -94,7 +100,7 @@ export default function WordwisePage() {
     trainingStopFlag.current = false;
     const model = modelRef.current;
     const optimizer = optimizerRef.current;
-    optimizer.learningRate = learningRate; // Обновляем learning rate на случай, если он изменился
+    optimizer.learningRate = learningRate;
 
     const { wordToIndex, vocabSize } = vocabDataRef.current;
 
@@ -109,55 +115,60 @@ export default function WordwisePage() {
     const targetTensors = wordsToTargetTensors(words.slice(1), wordToIndex, vocabSize);
     const batches = createBatches(inputTensors, targetTensors, batchSize);
     
-    // Продолжаем историю потерь, а не сбрасываем
     const newLossHistory = [...lossHistory]; 
-    const startEpoch = newLossHistory.length > 0 ? newLossHistory[newLossHistory.length - 1].epoch : 0;
+    const startEpoch = newLossHistory.length > 0 ? newLossHistory[newLossHistory.length - 1].epoch + 1 : 1;
     
     setStatus('Начинается обучение...');
     setTrainingProgress(0);
 
     for (let epoch = 0; epoch < numEpochs; epoch++) {
-      if (trainingStopFlag.current) {
-        setStatus(`Обучение остановлено на эпохе ${startEpoch + epoch + 1}.`);
-        break;
-      }
-      let epochLoss = 0;
-      let h = model.initializeStates(batchSize).h0;
-      let c = model.initializeStates(batchSize).c0;
+        if (trainingStopFlag.current) {
+            setStatus(`Обучение остановлено на эпохе ${startEpoch + epoch}.`);
+            break;
+        }
+        let epochLoss = 0;
+        let h = model.initializeStates(batchSize).h0;
+        let c = model.initializeStates(batchSize).c0;
 
-      for (const batch of batches) {
-        const { outputLogits: predictionLogits, h: nextH, c: nextC } = model.forwardStep(batch.inputs, h, c);
-        h = nextH.detach();
-        c = nextC.detach();
+        for (const batch of batches) {
+            const { outputLogits: predictionLogits, h: nextH, c: nextC } = model.forwardStep(batch.inputs, h, c);
+            h = nextH.detach();
+            c = nextC.detach();
 
-        const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batch.targets);
-        epochLoss += lossTensor.data[0];
-        lossTensor.backward();
-        optimizer.step(model.getParameters());
-      }
+            const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batch.targets);
+            epochLoss += lossTensor.data[0];
+            lossTensor.backward();
+            optimizer.step(model.getParameters());
+        }
 
-      const avgEpochLoss = epochLoss / batches.length;
-      newLossHistory.push({epoch: startEpoch + epoch + 1, loss: avgEpochLoss});
-      
-      if (epoch % 10 === 0 || epoch === numEpochs - 1) {
-        setLossHistory([...newLossHistory]);
-        setStatus(`Обучение: Эпоха ${startEpoch + epoch + 1}, Потеря: ${avgEpochLoss.toFixed(6)}`);
+        const avgEpochLoss = epochLoss / batches.length;
+        const currentEpochNumber = startEpoch + epoch;
+        newLossHistory.push({epoch: currentEpochNumber, loss: avgEpochLoss});
+        
+        // Update state more frequently but less expensively inside the loop
+        if (epoch % 5 === 0 || epoch === numEpochs - 1) {
+             setLossHistory([...newLossHistory]);
+        }
+        setStatus(`Обучение: Эпоха ${currentEpochNumber}, Потеря: ${avgEpochLoss.toFixed(6)}`);
         setTrainingProgress(((epoch + 1) / numEpochs) * 100);
-        await new Promise(resolve => setTimeout(resolve, 0)); 
-      }
+
+        // Yield to the main thread to prevent UI freezing
+        await new Promise(resolve => setTimeout(resolve, 0));
     }
     
     setTrainedModel(model);
+    setLossHistory([...newLossHistory]); // Final state update
     if (!trainingStopFlag.current) {
         setStatus('Обучение завершено. Модель готова к использованию в чате!');
         setOutput('Обучение WordWise.js завершено. Теперь можно вернуться в чат и пообщаться с обученной моделью!');
     }
     setIsTraining(false);
     trainingStopFlag.current = false;
-  }, [numEpochs, learningRate, textCorpus, isTraining, setTrainedModel, lossHistory]);
+  }, [numEpochs, learningRate, textCorpus, batchSize, isTraining, setTrainedModel, lossHistory]);
+
 
   const generateText = (startWord: string, numWords: number) => {
-    const model = modelRef.current; // Используем локальную модель для тестов
+    const model = modelRef.current;
     if (!model || !vocabDataRef.current) {
       setOutput('Модель не обучена. Сначала инициализируйте и обучите её.');
       setStatus('Генерация невозможна: модель не обучена.');
@@ -233,22 +244,27 @@ export default function WordwisePage() {
     reader.onload = (e) => {
       try {
         const jsonContent = e.target?.result as string;
-        const { model, vocabData } = deserializeModel(jsonContent);
+        const loaded = deserializeModel(jsonContent);
 
-        modelRef.current = model;
-        vocabDataRef.current = vocabData;
-        optimizerRef.current = new SGD(learningRate); // Создаем новый оптимизатор для загруженной модели
+        modelRef.current = loaded.model;
+        vocabDataRef.current = loaded.vocabData;
+        
+        // Update architecture params from loaded model
+        setEmbeddingDim(loaded.model.embeddingDim);
+        setHiddenSize(loaded.model.hiddenSize);
+        // batchSize is a training param, not part of model arch, so we don't set it.
 
-        // Обновляем глобальное состояние
-        setTrainedModel(model);
-        setVocabData(vocabData);
+        optimizerRef.current = new SGD(learningRate);
+
+        setTrainedModel(loaded.model);
+        setVocabData(loaded.vocabData);
         
         setIsInitialized(true);
         setStatus('Модель успешно загружена. Готова к дообучению или использованию.');
         setOutput('Модель загружена. Вы можете продолжить обучение или перейти в чат.');
-        setLossHistory([]); // Сбрасываем историю потерь для новой сессии
+        setLossHistory([]);
 
-        const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
+        const wordsForSampling = loaded.vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
         const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
         setSampleWords(shuffled.slice(0, 4));
 
@@ -261,9 +277,12 @@ export default function WordwisePage() {
       }
     };
     reader.readAsText(file);
-    // Сбрасываем значение input, чтобы можно было загрузить тот же файл снова
     event.target.value = '';
   };
+  
+  const isArchChanged = modelRef.current ? 
+        (embeddingDim !== modelRef.current.embeddingDim || hiddenSize !== modelRef.current.hiddenSize) : false;
+
 
   return (
     <div className="container mx-auto p-4 md:p-8 bg-slate-50 min-h-screen">
@@ -275,7 +294,7 @@ export default function WordwisePage() {
       
       <header className="text-center mb-8">
         <h1 className="text-4xl font-bold text-gray-800">Тренажерный Зал WordWise.js</h1>
-        <p className="text-lg text-muted-foreground mt-2">Здесь вы можете обучить, сохранить и загрузить свою собственную языковую модель</p>
+        <p className="text-lg text-muted-foreground mt-2">Здесь вы можете создать, обучить, сохранить и загрузить свою собственную языковую модель</p>
       </header>
       
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -298,7 +317,7 @@ export default function WordwisePage() {
                <Alert variant="default" className="mt-4">
                   <Info className="h-4 w-4" />
                   <AlertDescription>
-                    Чем больше качественных примеров, тем умнее будет модель. Вы можете дообучать модель на новых данных.
+                    Чем больше качественных примеров, тем умнее будет модель.
                   </AlertDescription>
               </Alert>
             </CardContent>
@@ -307,20 +326,89 @@ export default function WordwisePage() {
           <Card>
             <CardHeader>
               <CardTitle>Шаг 2: Настройте и обучите</CardTitle>
-              <CardDescription>Задайте параметры, инициализируйте модель и начните обучение. Вы можете дообучать уже существующую модель.</CardDescription>
+              <CardDescription>Задайте параметры, инициализируйте модель и начните обучение.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-               <div className="grid grid-cols-2 gap-4">
-                 <div>
-                    <Label htmlFor="epochs">Эпохи обучения</Label>
-                    <Input id="epochs" type="number" value={numEpochs} onChange={e => setNumEpochs(parseInt(e.target.value, 10))} min="1" max="100000" disabled={isTraining}/>
-                 </div>
-                 <div>
-                    <Label htmlFor="lr">Скорость обучения</Label>
-                    <Input id="lr" type="number" value={learningRate} onChange={e => setLearningRate(parseFloat(e.target.value))} step="0.001" min="0.0001" disabled={isTraining}/>
-                 </div>
-               </div>
+                <Accordion type="single" collapsible className="w-full">
+                  <AccordionItem value="hyperparams">
+                    <AccordionTrigger>
+                        <div className="flex items-center gap-2">
+                           <Settings className="h-5 w-5" />
+                           <span>Параметры обучения и модели</span>
+                        </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-4 pt-4">
+                      <Alert variant="destructive" className={isArchChanged ? 'block' : 'hidden'}>
+                         <AlertTitle>Внимание!</AlertTitle>
+                         <AlertDescription>
+                           Параметры архитектуры были изменены. Нажмите "Инициализировать / Сбросить", чтобы применить их.
+                         </AlertDescription>
+                       </Alert>
+                       <div className="grid grid-cols-2 gap-4">
+                         <div>
+                            <Label htmlFor="embeddingDim">Размер эмбеддинга</Label>
+                            <Input id="embeddingDim" type="number" value={embeddingDim} onChange={e => setEmbeddingDim(parseInt(e.target.value, 10))} min="8" step="8" disabled={isTraining || isInitialized}/>
+                         </div>
+                         <div>
+                            <Label htmlFor="hiddenSize">Размер скрытого слоя</Label>
+                            <Input id="hiddenSize" type="number" value={hiddenSize} onChange={e => setHiddenSize(parseInt(e.target.value, 10))} min="16" step="16" disabled={isTraining || isInitialized}/>
+                         </div>
+                         <div>
+                            <Label htmlFor="batchSize">Размер батча</Label>
+                            <Input id="batchSize" type="number" value={batchSize} onChange={e => setBatchSize(parseInt(e.target.value, 10))} min="1" disabled={isTraining}/>
+                         </div>
+                         <div>
+                            <Label htmlFor="lr">Скорость обучения</Label>
+                            <Input id="lr" type="number" value={learningRate} onChange={e => setLearningRate(parseFloat(e.target.value))} step="0.001" min="0.0001" disabled={isTraining}/>
+                         </div>
+                       </div>
+                       <div className="col-span-2">
+                          <Label htmlFor="epochs">Эпохи обучения</Label>
+                          <Input id="epochs" type="number" value={numEpochs} onChange={e => setNumEpochs(parseInt(e.target.value, 10))} min="1" max="100000" disabled={isTraining}/>
+                       </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+                <Button onClick={initializeWordWise} disabled={isTraining} className="w-full">
+                    Инициализировать / Сбросить модель
+                </Button>
+                {!isTraining ? (
+                    <Button onClick={trainWordWise} disabled={!isInitialized || isTraining || isArchChanged} className="w-full">
+                        Начать/Продолжить обучение
+                    </Button>
+                ) : (
+                  <Button onClick={stopTraining} variant="destructive" className="w-full">
+                      Остановить обучение
+                  </Button>
+                )}
+                {isTraining && <Progress value={trainingProgress} className="w-full" />}
+                <p className="text-sm text-center text-muted-foreground pt-2">Статус: {status}</p>
+            </CardContent>
+          </Card>
+           <Card>
+            <CardHeader>
+              <CardTitle>Управление моделью</CardTitle>
+              <CardDescription>Сохраните прогресс обучения или загрузите ранее сохраненную модель.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-4">
+               <Button onClick={handleSaveModel} disabled={isTraining || !isInitialized} variant="outline">
+                 <Download className="mr-2 h-4 w-4" /> Сохранить
+               </Button>
+               <Button asChild variant="outline" disabled={isTraining}>
+                 <Label htmlFor="load-model-input" className="cursor-pointer flex justify-center items-center">
+                    <Upload className="mr-2 h-4 w-4" /> Загрузить
+                    <Input id="load-model-input" type="file" accept=".json" className="sr-only" onChange={handleLoadModel} />
+                 </Label>
+               </Button>
+            </CardContent>
+           </Card>
 
+           <Card>
+            <CardHeader>
+              <CardTitle>Шаг 3: Проверьте генерацию</CardTitle>
+               <CardDescription>Здесь можно быстро проверить, как модель генерирует текст и посмотреть "мысли" модели.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
                 <div>
                     <Label htmlFor="temperature">Температура генерации: {temperature.toFixed(2)}</Label>
                     <Slider
@@ -335,48 +423,6 @@ export default function WordwisePage() {
                     />
                     <p className="text-xs text-muted-foreground mt-1">Низкая: более предсказуемый текст. Высокая: более случайный.</p>
                 </div>
-
-
-              <Button onClick={initializeWordWise} disabled={isTraining} className="w-full">
-                Инициализировать / Сбросить модель
-              </Button>
-              {!isTraining ? (
-                 <Button onClick={trainWordWise} disabled={!isInitialized || isTraining} className="w-full">
-                    Начать/Продолжить обучение
-                 </Button>
-              ) : (
-                <Button onClick={stopTraining} variant="destructive" className="w-full">
-                    Остановить обучение
-                 </Button>
-              )}
-               {isTraining && <Progress value={trainingProgress} className="w-full" />}
-              <p className="text-sm text-center text-muted-foreground pt-2">Статус: {status}</p>
-            </CardContent>
-          </Card>
-           <Card>
-            <CardHeader>
-              <CardTitle>Управление моделью</CardTitle>
-              <CardDescription>Сохраните прогресс обучения или загрузите ранее сохраненную модель.</CardDescription>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-4">
-               <Button onClick={handleSaveModel} disabled={isTraining || !isInitialized} variant="outline">
-                 <Download className="mr-2 h-4 w-4" /> Сохранить
-               </Button>
-               <Button asChild variant="outline" disabled={isTraining}>
-                 <Label htmlFor="load-model-input" className="cursor-pointer">
-                    <Upload className="mr-2 h-4 w-4" /> Загрузить
-                    <Input id="load-model-input" type="file" accept=".json" className="sr-only" onChange={handleLoadModel} />
-                 </Label>
-               </Button>
-            </CardContent>
-           </Card>
-
-           <Card>
-            <CardHeader>
-              <CardTitle>Шаг 3: Проверьте генерацию</CardTitle>
-               <CardDescription>Здесь можно быстро проверить, как модель генерирует текст и посмотреть "мысли" модели.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
                  <div className="grid grid-cols-2 gap-2">
                     {sampleWords.length > 0 ? (
                       sampleWords.map(word => (
@@ -386,6 +432,7 @@ export default function WordwisePage() {
                           onClick={() => generateText(word, 10)}
                           disabled={isTraining || !isInitialized}
                         >
+                          <TestTube2 className="mr-2 h-4 w-4" />
                           {word}...
                         </Button>
                       ))
