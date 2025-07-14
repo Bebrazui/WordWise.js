@@ -61,6 +61,37 @@ const defaultResponses = kb['неизвестная_фраза'].ответы;
 // --- Bot's "Brain" ---
 
 /**
+ * A simple and safe calculator function to evaluate arithmetic expressions.
+ * It respects parentheses and order of operations (*, / before +, -).
+ * @param expression The mathematical expression to evaluate.
+ * @returns The result of the calculation or null if the expression is invalid.
+ */
+function calculateExpression(expression: string): number | null {
+  try {
+    // This is a safer alternative to eval(). It creates a new Function
+    // which is executed in a closed scope. It's safe as long as the
+    // expression only contains numbers and basic math operators.
+    // We validate the expression with a regex to ensure safety.
+    const sanitizedExpression = expression.replace(/[^-()\d/*+.]/g, '');
+    if (sanitizedExpression !== expression) {
+      // Invalid characters were found
+      return null;
+    }
+
+    // eslint-disable-next-line no-new-func
+    const result = new Function(`return ${expression}`)();
+
+    if (typeof result !== 'number' || !isFinite(result)) {
+      return null;
+    }
+    return result;
+  } catch (error) {
+    return null;
+  }
+}
+
+
+/**
  * Replaces words in a sentence with their synonyms to make it more dynamic.
  * @param sentence The sentence to process.
  * @returns A sentence with some words replaced by synonyms.
@@ -92,10 +123,17 @@ function synonymize(sentence: string): string {
  * @returns A response string.
  */
 function generateRigidResponse(userInput: string, history: string[] = []): string {
+    // 1. Check for a mathematical expression first.
+    const mathRegex = /^[0-9\s\+\-\*\/\(\)\.]+$/;
+    if (mathRegex.test(userInput.trim())) {
+      const result = calculateExpression(userInput);
+      if (result !== null) {
+        return `Результат: ${result}`;
+      }
+    }
+
     const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
     const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
-    const fullContext = [...history, userInput].join(' ').toLowerCase().replace(/[.,!?]/g, '');
-    const wordsInContext = new Set(fullContext.split(/\s+/).filter(w => w));
 
     let bestMatch: { intent: string; score: number } | null = null;
 
@@ -108,7 +146,6 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
             const lowerPhrase = phrase.toLowerCase();
             const phraseWords = new Set(lowerPhrase.split(/\s+/));
             
-            // Score against current input
             const intersection = new Set([...phraseWords].filter(x => wordsInInput.has(x)));
             const union = new Set([...phraseWords, ...wordsInInput]);
             const score = union.size > 0 ? intersection.size / union.size : 0;
