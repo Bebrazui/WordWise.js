@@ -10,9 +10,10 @@ import { Form, FormControl, FormField, FormItem } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Send, Bot, User } from "lucide-react";
+import { Send, Bot, User, BrainCircuit, BotIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { Separator } from "@/components/ui/separator";
 
 type Message = {
   id: number;
@@ -20,6 +21,8 @@ type Message = {
   sender: "user" | "ai";
   isTyping?: boolean;
 };
+
+type ModelType = 'R' | 'Q';
 
 const formSchema = z.object({
   message: z.string().min(1, "Message cannot be empty"),
@@ -29,11 +32,12 @@ export function Chat() {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 1,
-      text: "Привет! Я WordWise, ваш личный помощник. Давайте пообщаемся.",
+      text: "Привет! Я WordWise, ваш личный помощник. Выберите модель и давайте пообщаемся.",
       sender: "ai",
     },
   ]);
   const [isLoading, setIsLoading] = useState(false);
+  const [activeModel, setActiveModel] = useState<ModelType>('R');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -71,10 +75,9 @@ export function Chat() {
     setIsLoading(true);
 
     try {
-      // Искусственная задержка для имитации "мышления"
       await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
       
-      const response = await contextualResponse({ userInput: values.message });
+      const response = await contextualResponse({ userInput: values.message, model: activeModel });
 
       const aiMessage: Message = {
         id: Date.now() + 2,
@@ -97,8 +100,28 @@ export function Chat() {
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
-      <header className="flex items-center justify-center p-4 border-b shadow-sm bg-card shrink-0">
+      <header className="flex items-center justify-between p-4 border-b shadow-sm bg-card shrink-0">
         <h1 className="text-xl font-bold text-card-foreground">WordWise Chat</h1>
+        <div className="flex items-center gap-2">
+            <Button
+                variant={activeModel === 'R' ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setActiveModel('R')}
+                className="gap-2"
+            >
+                <BotIcon className="h-4 w-4"/>
+                Bot R 0.1
+            </Button>
+            <Button
+                variant={activeModel === 'Q' ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setActiveModel('Q')}
+                className="gap-2"
+            >
+                <BrainCircuit className="h-4 w-4"/>
+                Bot Q 0.1
+            </Button>
+        </div>
       </header>
       <main className="flex-1 overflow-hidden">
         <ScrollArea className="h-full p-4">
