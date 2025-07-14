@@ -111,6 +111,7 @@ const sessionMemory = {
  * @returns The lemmatized (base) form of the word.
  */
 function lemmatize(word: string): string {
+    word = word.toLowerCase();
     // 1. Check if the word is already a known base form or a direct synonym key.
     if(syn[word] || wc[word] || kb[word]) return word;
     
@@ -147,7 +148,7 @@ function lemmatize(word: string): string {
     }
     
     // 5. Verb endings
-    const verbEndings = ['ешь', 'ет', 'ем', 'ете', 'ут', 'ют', 'ишь', 'ит', 'им', 'ите', 'ат', 'ят', 'л', 'ла', 'ло', 'ли'];
+    const verbEndings = ['ешь', 'ет', 'ем', 'ете', 'ут', 'ют', 'ишь', 'ит', 'им', 'ите', 'ат', 'ят', 'л', 'ла', 'ло', 'ли', 'ть', 'ти'];
     for (const ending of verbEndings) {
         if(word.endsWith(ending)) {
             let base = word.slice(0, -ending.length);
@@ -282,7 +283,7 @@ function handleDirectResponse(normalizedInput: string, history: string[]): strin
 
 // --- Pipeline Stage 4: Contextual Analyzer ---
 const questionAboutWellbeing = [
-  'как дела', 'как ты', 'как поживаешь', 'как твое', 'как сам', 'как настроение', 'что нового',
+  'как дела', 'как ты', 'как поживаешь', 'как твое', 'как сам', 'как настроение', 'что нового', 'как самочувствие',
 ];
 const positiveUserStates = [
   'хорошо', 'нормально', 'отлично', 'замечательно', 'прекрасно', 'порядок', 'ничего', 'пойдет', 'хороший'
@@ -446,6 +447,69 @@ function generateConnectionResponse(normalizedInput: string): string | null {
     return null;
 }
 
+// --- (Experimental) Pipeline Stage 6.5: Telegraphic Generator ---
+/**
+ * Generates a terse, "telegraphic" style response by linking keywords.
+ * This is used for the experimental mode.
+ * @param normalizedInput The user's cleaned and lemmatized message.
+ * @returns A generated response string or null.
+ */
+function generateTelegraphicResponse(normalizedInput: string): string | null {
+    const words = [...new Set(normalizedInput.split(/\s+/).filter(w => w.length > 2))];
+    if (words.length === 0) return null;
+
+    const keyConcepts: { word: string; connection: WordConnection | null }[] = [];
+
+    // Find the most "important" words that have connections
+    for (const word of words) {
+        if (wc[word]) {
+            const bestConnection = [...wc[word]].sort((a, b) => b.weight - a.weight)[0];
+            keyConcepts.push({ word, connection: bestConnection });
+        }
+    }
+
+    if (keyConcepts.length === 0) {
+        return null;
+    }
+
+    // Sort concepts by connection weight to prioritize
+    keyConcepts.sort((a, b) => (b.connection?.weight ?? 0) - (a.connection?.weight ?? 0));
+
+    // Construct the telegraphic response
+    let response = '';
+    const mainConcept = keyConcepts[0];
+    response += `${mainConcept.word.charAt(0).toUpperCase() + mainConcept.word.slice(1)}`;
+
+    if (mainConcept.connection) {
+        const conn = mainConcept.connection;
+        const connValue = Array.isArray(conn.value) ? conn.value.join(', ') : conn.value;
+        switch (conn.type) {
+            case 'is_a':
+                response += ` - это ${connValue}.`;
+                break;
+            case 'can_do':
+                response += ` может ${connValue}.`;
+                break;
+            case 'related_to':
+                 response += `. Связано с: ${connValue}.`;
+                break;
+            default:
+                response += `: ${connValue}.`;
+        }
+    }
+    
+    // Add a second concept if available
+    if (keyConcepts.length > 1) {
+        const secondConcept = keyConcepts[1];
+        if (secondConcept.connection) {
+             response += ` Также: ${secondConcept.word} - ${secondConcept.connection.value}.`;
+        }
+    }
+
+    return response.trim();
+}
+
+
 // --- Pipeline Stage 7: Observer & Smart Fallback ---
 /**
  * Provides a thoughtful default response and triggers the learning mechanism.
@@ -562,9 +626,9 @@ async function generateCreativeResponse(
   
   // Experimental mode has a specific flow
   if (experimental) {
-      const connectionResponse = generateConnectionResponse(normalizedInput);
-      if (connectionResponse) {
-          return connectionResponse; // No synonymization to see the raw output
+      const telegraphicResponse = generateTelegraphicResponse(normalizedInput);
+      if (telegraphicResponse) {
+          return telegraphicResponse;
       }
       // Fallback for experimental: try a normal KB match, but without synonymization
       const bestMatch = findBestIntentMatch(normalizedInput);
