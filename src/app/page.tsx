@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Settings, BrainCircuit, Bot } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Label } from "@/components/ui/label";
@@ -26,7 +26,10 @@ export default function Home() {
   useEffect(() => {
     // Scroll to the bottom when messages change
     if (scrollAreaRef.current) {
-      scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
+        const viewport = scrollAreaRef.current.querySelector('div');
+        if (viewport) {
+            viewport.scrollTop = viewport.scrollHeight;
+        }
     }
   }, [messages]);
 
@@ -54,11 +57,11 @@ export default function Home() {
   return (
     <div className="flex justify-center items-center h-screen bg-gray-100 dark:bg-gray-900">
       <Card className="w-full max-w-2xl h-[90vh] flex flex-col shadow-lg">
-        <CardHeader className="flex flex-row items-center justify-between border-b">
+        <CardHeader className="flex flex-row items-center justify-between border-b p-4">
           <div className="flex items-center gap-3">
             <Bot className="w-8 h-8 text-primary" />
             <div>
-              <CardTitle>{modelName}</CardTitle>
+              <CardTitle className="text-lg">{modelName}</CardTitle>
               <p className="text-xs text-muted-foreground">Прототип ИИ-ассистента</p>
             </div>
           </div>
@@ -97,8 +100,8 @@ export default function Home() {
           </div>
         </CardHeader>
         <CardContent className="flex-grow p-0">
-          <ScrollArea className="h-full p-4" ref={scrollAreaRef}>
-            <div className="space-y-4">
+          <ScrollArea className="h-full" ref={scrollAreaRef}>
+             <div className="p-4 space-y-4">
               {messages.map((message, index) => (
                 <div key={index} className={`flex items-start gap-3 ${message.role === 'user' ? 'justify-end' : ''}`}>
                   {message.role === 'assistant' && (
@@ -136,7 +139,7 @@ export default function Home() {
             </div>
           </ScrollArea>
         </CardContent>
-        <div className="p-4 border-t">
+        <div className="p-4 border-t bg-background">
           <form onSubmit={handleSubmit} className="flex gap-2">
             <Input
               value={input}
@@ -144,6 +147,7 @@ export default function Home() {
               placeholder="Спросите что-нибудь..."
               autoComplete="off"
               disabled={isLoading}
+              className="flex-grow"
             />
             <Button type="submit" disabled={isLoading}>
               Отправить
