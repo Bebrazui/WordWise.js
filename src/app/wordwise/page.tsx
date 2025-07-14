@@ -1,16 +1,13 @@
 
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Info, Upload, Download, Settings, TestTube2, CheckCircle } from 'lucide-react';
+import { Info, Upload, Download, Settings, TestTube2, CheckCircle, ImagePlus, FileText } from 'lucide-react';
 
-import { Tensor } from '../../lib/tensor';
-import { crossEntropyLossWithSoftmaxGrad } from '../../lib/layers';
-import { SGD } from '../../lib/optimizer';
-import { WordWiseModel, serializeModel, deserializeModel } from '../../lib/model';
-import { buildVocabulary, wordsToInputTensors, wordsToTargetTensors, getWordFromPrediction, createBatches } from '../../utils/tokenizer';
+import { serializeModel, deserializeModel, WordWiseModel } from '../../lib/model';
+import { getWordFromPrediction } from '../../utils/tokenizer';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -22,12 +19,15 @@ import { Slider } from '@/components/ui/slider';
 import { PredictionVisualizer, Prediction } from '@/components/ui/prediction-visualizer';
 import { useToast } from '@/hooks/use-toast';
 import { useTrainedModel } from '@/hooks/use-trained-model';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion"
+import { Tensor } from '@/lib/tensor';
+
 
 const defaultCorpus = `вопрос: привет ответ: привет как твои дела
 вопрос: как дела ответ: у меня все отлично спасибо а у тебя
@@ -38,6 +38,15 @@ const defaultCorpus = `вопрос: привет ответ: привет ка�
 вопрос: у тебя есть хобби ответ: да я люблю программировать и создавать новое
 вопрос: добрый день ответ: и вам добрый день`;
 
+type TrainingDataType = {
+  type: 'text';
+  corpus: string;
+} | {
+  type: 'image';
+  items: { dataUrl: string; label: string }[];
+};
+
+
 export default function WordwisePage() {
   const [output, setOutput] = useState<string>('');
   const [latestPredictions, setLatestPredictions] = useState<Prediction[]>([]);
@@ -47,13 +56,14 @@ export default function WordwisePage() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [isTrained, setIsTrained] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
-  const [textCorpus, setTextCorpus] = useState(defaultCorpus);
   const [sampleWords, setSampleWords] = useState<string[]>([]);
-  
+
+  // Training data state
+  const [trainingData, setTrainingData] = useState<TrainingDataType>({ type: 'text', corpus: defaultCorpus });
+
+  // Hyperparameters
   const [learningRate, setLearningRate] = useState(0.01);
   const [numEpochs, setNumEpochs] = useState(500);
-
-  // Model architecture state
   const [embeddingDim, setEmbeddingDim] = useState(64);
   const [hiddenSize, setHiddenSize] = useState(128);
   const [batchSize, setBatchSize] = useState(4);
@@ -61,130 +71,111 @@ export default function WordwisePage() {
   const { setTrainedModel, setVocabData, temperature, setTemperature } = useTrainedModel();
   const { toast } = useToast();
   
+  const workerRef = useRef<Worker | null>(null);
   const modelRef = useRef<WordWiseModel | null>(null);
-  const optimizerRef = useRef<SGD | null>(null);
   const vocabDataRef = useRef<{ vocab: string[]; wordToIndex: Map<string, number>; indexToWord: Map<number, string>; vocabSize: number } | null>(null);
-  const trainingStopFlag = useRef(false);
+
+  // Setup Web Worker
+  useEffect(() => {
+    const worker = new Worker(new URL('./wordwise.worker.ts', import.meta.url));
+    workerRef.current = worker;
+
+    worker.onmessage = (event: MessageEvent) => {
+      const { type, payload } = event.data;
+      switch (type) {
+        case 'worker-ready':
+          setStatus('Worker готов. Можно инициализировать модель.');
+          break;
+        case 'initialized':
+          setStatus('Готов к обучению.');
+          setIsInitialized(true);
+          setIsTrained(false);
+          setLossHistory([]);
+          setLatestPredictions([]);
+          setTrainedModel(null);
+          setSampleWords(payload.sampleWords);
+          setOutput(`WordWise.js инициализирован. Размер словаря: ${payload.vocabSize}.`);
+          break;
+        case 'progress':
+          setLossHistory(prev => [...prev, { epoch: payload.epoch, loss: payload.loss }]);
+          setStatus(`Обучение: Эпоха ${payload.epoch}, Потеря: ${payload.loss.toFixed(6)}`);
+          setTrainingProgress(payload.progress);
+          break;
+        case 'training-complete':
+          setStatus('Обучение завершено. Модель готова к проверке и применению.');
+          setOutput('Обучение завершено. Проверьте генерацию и примените к чату.');
+          setIsTraining(false);
+          setIsTrained(true);
+          break;
+        case 'training-stopped':
+           setStatus(`Обучение остановлено на эпохе ${payload.epoch}.`);
+           setIsTraining(false);
+           break;
+        case 'generation-result':
+            setOutput(payload.text);
+            setStatus('Генерация текста завершена.');
+            break;
+        case 'error':
+          setStatus(`Ошибка в Worker: ${payload.message}`);
+          setIsTraining(false);
+          break;
+      }
+    };
+
+    return () => {
+      worker.terminate();
+    };
+  }, [setTrainedModel]);
+
 
   const initializeWordWise = useCallback(() => {
-    try {
-      setStatus('Инициализация WordWise.js...');
-      const words = textCorpus.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
-      const vocabData = buildVocabulary(words.join(' '));
-      vocabDataRef.current = vocabData;
-
-      modelRef.current = new WordWiseModel(vocabData.vocabSize, embeddingDim, hiddenSize);
-      optimizerRef.current = new SGD(learningRate);
-      
-      setVocabData(vocabData);
-      
-      const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
-      const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
-      setSampleWords(shuffled.slice(0, 4));
-
-      setLossHistory([]);
-      setOutput('WordWise.js инициализирован. Словарь создан. Готов к обучению.');
-      console.log('Словарь:', vocabData.vocab);
-      setStatus('Готов к обучению.');
-      setIsInitialized(true);
-      setIsTrained(false);
-      setLatestPredictions([]);
-      setTrainedModel(null);
-    } catch (error) {
-      console.error("Ошибка инициализации:", error);
-      setStatus(`Ошибка инициализации: ${error instanceof Error ? error.message : String(error)}`);
+    if (trainingData.type !== 'text') {
+        toast({ title: "Ошибка", description: "Инициализация пока поддерживается только для текста.", variant: "destructive" });
+        return;
     }
-  }, [textCorpus, learningRate, embeddingDim, hiddenSize, setVocabData, setTrainedModel]);
+    setStatus('Инициализация WordWise.js...');
+    workerRef.current?.postMessage({
+        type: 'initialize',
+        payload: {
+            textCorpus: trainingData.corpus,
+            embeddingDim,
+            hiddenSize,
+            learningRate
+        }
+    });
+  }, [trainingData, embeddingDim, hiddenSize, learningRate, toast]);
   
   const stopTraining = () => {
-    trainingStopFlag.current = true;
+    workerRef.current?.postMessage({ type: 'stop' });
   };
 
   const trainWordWise = async () => {
-    if (!modelRef.current || !vocabDataRef.current || !optimizerRef.current) {
-      setStatus('Сначала инициализируйте модель.');
-      return;
+    if (trainingData.type !== 'text') {
+        toast({ title: "Ошибка", description: "Обучение пока поддерживается только для текста.", variant: "destructive" });
+        return;
     }
-    if (isTraining) return;
+    if (!isInitialized || isTraining) return;
 
     setIsTraining(true);
     setIsTrained(false);
-    trainingStopFlag.current = false;
-    const model = modelRef.current;
-    const optimizer = optimizerRef.current;
-    optimizer.learningRate = learningRate;
-
-    const { wordToIndex, vocabSize } = vocabDataRef.current;
-
-    const words = textCorpus.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
-    if (words.length < 2) {
-      setStatus('Недостаточно слов для обучения в корпусе.');
-      setIsTraining(false);
-      return;
-    }
-
-    const inputTensors = wordsToInputTensors(words.slice(0, -1), wordToIndex);
-    const targetTensors = wordsToTargetTensors(words.slice(1), wordToIndex, vocabSize);
-    const batches = createBatches(inputTensors, targetTensors, batchSize);
-
-    const newLossHistory = [...lossHistory];
-    const startEpoch = newLossHistory.length > 0 ? newLossHistory[newLossHistory.length - 1].epoch + 1 : 1;
-
     setStatus('Начинается обучение...');
     setTrainingProgress(0);
 
-    let epoch = 0;
-
-    const runEpoch = async () => {
-      if (epoch >= numEpochs || trainingStopFlag.current) {
-        setIsTrained(true);
-        setLossHistory([...newLossHistory]);
-        if (!trainingStopFlag.current) {
-            setStatus('Обучение завершено. Модель готова к проверке и применению.');
-            setOutput('Обучение WordWise.js завершено. Проверьте генерацию и нажмите "Применить к чату".');
-        } else {
-             setStatus(`Обучение остановлено на эпохе ${startEpoch + epoch}.`);
-        }
-        setIsTraining(false);
-        trainingStopFlag.current = false;
-        return;
+    workerRef.current?.postMessage({
+      type: 'train',
+      payload: {
+        textCorpus: trainingData.corpus,
+        numEpochs,
+        learningRate,
+        batchSize,
+        lossHistory
       }
-
-      let epochLoss = 0;
-      let h = model.initializeStates(batchSize).h0;
-      let c = model.initializeStates(batchSize).c0;
-
-      for (const batch of batches) {
-        const { outputLogits: predictionLogits, h: nextH, c: nextC } = model.forwardStep(batch.inputs, h, c);
-        h = nextH.detach();
-        c = nextC.detach();
-
-        const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batch.targets);
-        epochLoss += lossTensor.data[0];
-        lossTensor.backward();
-        optimizer.step(model.getParameters());
-      }
-
-      const avgEpochLoss = epochLoss / batches.length;
-      const currentEpochNumber = startEpoch + epoch;
-      newLossHistory.push({ epoch: currentEpochNumber, loss: avgEpochLoss });
-
-      setLossHistory([...newLossHistory]);
-      setStatus(`Обучение: Эпоха ${currentEpochNumber}, Потеря: ${avgEpochLoss.toFixed(6)}`);
-      setTrainingProgress(((epoch + 1) / numEpochs) * 100);
-
-      epoch++;
-      // Даем браузеру передышку для перерисовки UI
-      await new Promise(resolve => setTimeout(resolve, 0));
-      runEpoch();
-    };
-
-    runEpoch();
+    });
   };
 
   const applyToChat = () => {
-    if (!modelRef.current || !vocabDataRef.current) {
-        toast({ title: "Ошибка", description: "Нет модели для применения.", variant: "destructive" });
+     if (!modelRef.current || !vocabDataRef.current) {
+        toast({ title: "Ошибка", description: "Нет модели для применения. Обучите или загрузите модель.", variant: "destructive" });
         return;
     }
     setTrainedModel(modelRef.current);
@@ -192,58 +183,75 @@ export default function WordwisePage() {
     toast({ title: "Успех!", description: "Модель успешно применена к чату. Можете вернуться и пообщаться." });
   };
 
-
-  const generateText = (startWord: string, numWords: number) => {
-    const model = modelRef.current;
-    if (!model || !vocabDataRef.current) {
-      setOutput('Модель не обучена. Сначала инициализируйте и обучите её.');
-      setStatus('Генерация невозможна: модель не обучена.');
+  const generateText = (startWord: string) => {
+    if (!modelRef.current) {
+      toast({ title: "Ошибка", description: "Сначала обучите или загрузите модель.", variant: "destructive" });
       return;
     }
-
-    const { wordToIndex, indexToWord } = vocabDataRef.current;
-    let currentWord = startWord.toLowerCase();
-    
-    let initialOutput = '';
-    if (!wordToIndex.has(currentWord)) {
+     const { wordToIndex, indexToWord } = vocabDataRef.current!;
+     let currentWord = startWord.toLowerCase();
+     
+     if (!wordToIndex.has(currentWord)) {
         currentWord = '<unk>';
-        initialOutput = `Начальное слово "${startWord}" не найдено. Используем "<unk>".\n`;
-    }
+        setOutput(`Начальное слово "${startWord}" не найдено. Используем "<unk>".\n`);
+     }
 
-    let generatedSequence = [currentWord];
-    let h = model.initializeStates(1).h0;
-    let c = model.initializeStates(1).c0;
+     let generatedSequence = [currentWord];
+     let h = modelRef.current.initializeStates(1).h0;
+     let c = modelRef.current.initializeStates(1).c0;
 
-    setStatus(`Генерация текста, начало: "${currentWord}"...`);
-    setLatestPredictions([]);
+     setStatus(`Генерация текста, начало: "${currentWord}"...`);
+     setLatestPredictions([]);
 
-    for (let i = 0; i < numWords; i++) {
-      const inputTensor = new Tensor([wordToIndex.get(currentWord) || 0], [1]);
-      const { outputLogits: predictionLogits, h: nextH, c: nextC } = model.forwardStep(inputTensor, h, c);
-      h = nextH;
-      c = nextC;
+     const numWords = 10;
+     for (let i = 0; i < numWords; i++) {
+        const inputTensor = new Tensor([wordToIndex.get(currentWord) || 0], [1]);
+        const { outputLogits: predictionLogits, h: nextH, c: nextC } = modelRef.current.forwardStep(inputTensor, h, c);
+        h = nextH;
+        c = nextC;
 
-      const { chosenWord, topPredictions } = getWordFromPrediction(predictionLogits, indexToWord, temperature, generatedSequence);
-      setLatestPredictions(topPredictions);
-      
-      if (chosenWord === 'вопрос' || chosenWord === 'ответ') {
-          continue;
-      }
-
-      generatedSequence.push(chosenWord);
-      currentWord = chosenWord;
-
-      if (chosenWord === '<unk>') {
-          break;
-      }
-    }
-    setOutput(initialOutput + `Сгенерированный текст: ${generatedSequence.join(' ')}`);
-    setStatus('Генерация текста завершена.');
+        const { chosenWord, topPredictions } = getWordFromPrediction(predictionLogits, indexToWord, temperature, generatedSequence);
+        setLatestPredictions(topPredictions);
+        
+        if (chosenWord === 'вопрос' || chosenWord === 'ответ') continue;
+        
+        generatedSequence.push(chosenWord);
+        currentWord = chosenWord;
+        if (chosenWord === '<unk>') break;
+     }
+     setOutput(prev => prev + `Сгенерированный текст: ${generatedSequence.join(' ')}`);
+     setStatus('Генерация текста завершена.');
   };
+  
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files) return;
+
+    const newImageItems: { dataUrl: string; label: string }[] = [];
+    const filesArray = Array.from(files);
+
+    filesArray.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            newImageItems.push({
+                dataUrl: e.target?.result as string,
+                label: file.name.split('.')[0] || 'unknown'
+            });
+            if (newImageItems.length === filesArray.length) {
+                setTrainingData({ type: 'image', items: newImageItems });
+            }
+        };
+        reader.readAsDataURL(file);
+    });
+     event.target.value = '';
+  }
+
 
   const handleSaveModel = () => {
+    // This needs to be adapted for workers. The worker needs to send the model weights back.
+    // For now, we save the model from the main thread if it exists.
     if (!modelRef.current || !vocabDataRef.current) {
-      toast({ title: "Ошибка", description: "Нет модели для сохранения. Сначала инициализируйте и обучите её.", variant: "destructive" });
+      toast({ title: "Ошибка", description: "Нет модели для сохранения.", variant: "destructive" });
       return;
     }
     try {
@@ -251,7 +259,7 @@ export default function WordwisePage() {
       const blob = new Blob([modelJson], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-a.href = url;
+      a.href = url;
       a.download = `wordwise-model-${new Date().toISOString()}.json`;
       document.body.appendChild(a);
       a.click();
@@ -279,21 +287,18 @@ a.href = url;
         
         setEmbeddingDim(loaded.model.embeddingDim);
         setHiddenSize(loaded.model.hiddenSize);
-        
-        optimizerRef.current = new SGD(learningRate);
 
         setIsInitialized(true);
-        setIsTrained(true); // Загруженную модель считаем обученной
+        setIsTrained(true);
         setStatus('Модель успешно загружена. Готова к дообучению или использованию.');
-        setOutput('Модель загружена. Вы можете продолжить обучение или применить её к чату.');
+        setOutput('Модель загружена.');
         setLossHistory([]);
 
         const wordsForSampling = loaded.vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
         const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
         setSampleWords(shuffled.slice(0, 4));
 
-        toast({ title: "Успех", description: "Модель успешно загружена. Примените её к чату." });
-
+        toast({ title: "Успех", description: "Модель успешно загружена." });
       } catch (error) {
         console.error("Ошибка загрузки модели:", error);
         toast({ title: "Ошибка загрузки", description: `${error instanceof Error ? error.message : 'Неверный формат файла'}`, variant: "destructive" });
@@ -303,10 +308,6 @@ a.href = url;
     reader.readAsText(file);
     event.target.value = '';
   };
-  
-  const isArchChanged = modelRef.current ? 
-        (embeddingDim !== modelRef.current.embeddingDim || hiddenSize !== modelRef.current.hiddenSize) : false;
-
 
   return (
     <div className="container mx-auto p-4 md:p-8 bg-slate-50 min-h-screen">
@@ -318,7 +319,7 @@ a.href = url;
       
       <header className="text-center mb-8">
         <h1 className="text-4xl font-bold text-gray-800">Тренажерный Зал WordWise.js</h1>
-        <p className="text-lg text-muted-foreground mt-2">Здесь вы можете создать, обучить, сохранить и загрузить свою собственную языковую модель</p>
+        <p className="text-lg text-muted-foreground mt-2">Здесь вы можете создать, обучить и протестировать свою языковую или визуальную модель</p>
       </header>
       
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -326,24 +327,58 @@ a.href = url;
           <Card>
             <CardHeader>
               <CardTitle>Шаг 1: Подготовьте данные</CardTitle>
-              <CardDescription>Введите текст для обучения. Чтобы научить модель диалогу, используйте формат "вопрос: ... ответ: ...".</CardDescription>
+              <CardDescription>Выберите тип данных для обучения: текст или изображения.</CardDescription>
             </CardHeader>
             <CardContent>
-              <Label htmlFor="corpus">Ваш обучающий корпус:</Label>
-              <Textarea
-                id="corpus"
-                value={textCorpus}
-                onChange={(e) => setTextCorpus(e.target.value)}
-                placeholder="вопрос: привет ответ: привет как дела..."
-                className="min-h-[150px] mt-2 font-mono"
-                disabled={isTraining || isInitialized}
-              />
-               <Alert variant="default" className="mt-4">
-                  <Info className="h-4 w-4" />
-                  <AlertDescription>
-                    Чем больше качественных примеров, тем умнее будет модель.
-                  </AlertDescription>
-              </Alert>
+                <Tabs defaultValue="text" className="w-full">
+                    <TabsList className="grid w-full grid-cols-2">
+                        <TabsTrigger value="text"><FileText className="w-4 h-4 mr-2"/>Текст</TabsTrigger>
+                        <TabsTrigger value="image"><ImagePlus className="w-4 h-4 mr-2"/>Изображения</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="text" className="mt-4">
+                        <Label htmlFor="corpus">Ваш обучающий корпус:</Label>
+                        <Textarea
+                            id="corpus"
+                            value={trainingData.type === 'text' ? trainingData.corpus : ''}
+                            onChange={(e) => setTrainingData({ type: 'text', corpus: e.target.value })}
+                            placeholder="вопрос: привет ответ: привет как дела..."
+                            className="min-h-[150px] mt-2 font-mono"
+                            disabled={isTraining || isInitialized}
+                        />
+                        <Alert variant="default" className="mt-4">
+                            <Info className="h-4 w-4" />
+                            <AlertDescription>
+                            Чем больше качественных примеров, тем умнее будет модель.
+                            </AlertDescription>
+                        </Alert>
+                    </TabsContent>
+                    <TabsContent value="image" className="mt-4">
+                        <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-6">
+                            <ImagePlus className="w-12 h-12 text-gray-400 mb-2"/>
+                            <Label htmlFor="image-upload" className="mb-2 text-center text-sm text-gray-600">Перетащите файлы сюда или нажмите для выбора</Label>
+                             <Button asChild variant="outline" size="sm">
+                                <Label htmlFor="image-upload" className="cursor-pointer">
+                                    Загрузить изображения
+                                </Label>
+                             </Button>
+                            <Input id="image-upload" type="file" multiple accept="image/*" className="sr-only" onChange={handleImageUpload}/>
+                            <p className="text-xs text-gray-500 mt-2">Загрузите изображения для обучения</p>
+                        </div>
+                         {trainingData.type === 'image' && trainingData.items.length > 0 && (
+                            <div className="mt-4">
+                                <p className="text-sm font-medium">Загружено {trainingData.items.length} изображений:</p>
+                                <div className="grid grid-cols-3 gap-2 mt-2 max-h-48 overflow-y-auto">
+                                    {trainingData.items.map((item, index) => (
+                                        <div key={index} className="relative">
+                                            <img src={item.dataUrl} alt={item.label} className="rounded-md object-cover aspect-square" />
+                                            <p className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs text-center p-0.5 truncate">{item.label}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                         )}
+                    </TabsContent>
+                </Tabs>
             </CardContent>
           </Card>
 
@@ -362,12 +397,6 @@ a.href = url;
                         </div>
                     </AccordionTrigger>
                     <AccordionContent className="space-y-4 pt-4">
-                      <Alert variant="destructive" className={isArchChanged ? 'block' : 'hidden'}>
-                         <AlertTitle>Внимание!</AlertTitle>
-                         <AlertDescription>
-                           Параметры архитектуры были изменены. Нажмите "Инициализировать / Сбросить", чтобы применить их.
-                         </AlertDescription>
-                       </Alert>
                        <div className="grid grid-cols-2 gap-4">
                          <div>
                             <Label htmlFor="embeddingDim">Размер эмбеддинга</Label>
@@ -398,7 +427,7 @@ a.href = url;
                 </Button>
                 <div className="flex gap-2">
                   {!isTraining ? (
-                      <Button onClick={trainWordWise} disabled={!isInitialized || isTraining || isArchChanged} className="w-full">
+                      <Button onClick={trainWordWise} disabled={!isInitialized || isTraining} className="w-full">
                           Начать/Продолжить обучение
                       </Button>
                   ) : (
@@ -459,7 +488,7 @@ a.href = url;
                         <Button
                           key={word}
                           variant="outline"
-                          onClick={() => generateText(word, 10)}
+                          onClick={() => generateText(word)}
                           disabled={isTraining || !isTrained}
                         >
                           <TestTube2 className="mr-2 h-4 w-4" />
