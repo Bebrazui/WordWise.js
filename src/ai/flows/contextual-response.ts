@@ -60,6 +60,9 @@ type Synonyms = {
 };
 
 type WordConnections = {
+  веса_частей_речи: {
+    [partOfSpeech: string]: number;
+  };
   словарь_связей: {
     [partOfSpeech: string]: {
       [word: string]: {
@@ -422,17 +425,17 @@ function findBestIntentMatch(lowerCaseInput: string): { intent: string; score: n
 /**
  * Helper for Model Q. Generates a response based on word connections if a direct intent is not found.
  * This version is more "creative" and tries to combine information.
+ * It simulates an "Attention Mechanism" by weighing words.
  * @param userInput The user's message.
  * @returns A generated response string or null if no connection is found.
  */
 function generateConnectionResponse(userInput: string): string | null {
   const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
-  const words = [
-    ...new Set(lowerCaseInput.split(/\s+/).filter(w => w.length > 2)),
-  ]; // Use unique words, ignore short ones
+  const words = [...new Set(lowerCaseInput.split(/\s+/).filter(w => w.length > 2))]; 
   const connections = wc.словарь_связей;
+  const weights = wc.веса_частей_речи;
 
-  const foundFacts: {word: string; fact: string}[] = [];
+  const foundFacts: { word: string; fact: string; weight: number }[] = [];
 
   const allWordsAndSynonyms = new Set(words);
   words.forEach(word => {
@@ -447,24 +450,25 @@ function generateConnectionResponse(userInput: string): string | null {
       if (Object.prototype.hasOwnProperty.call(wordsInPOS, word)) {
         const properties = wordsInPOS[word as keyof typeof wordsInPOS];
         let fact = `${word.charAt(0).toUpperCase() + word.slice(1)}`;
+        let hasFact = false;
 
         if (properties.is_a) {
-          fact += ` - это ${
-            Array.isArray(properties.is_a)
-              ? properties.is_a[0]
-              : properties.is_a
-          }`;
+          fact += ` - это ${Array.isArray(properties.is_a) ? properties.is_a.join(', ') : properties.is_a}`;
+          hasFact = true;
         }
         if (properties.can_do) {
-          fact += `, который может ${
-            Array.isArray(properties.can_do)
-              ? properties.can_do[0]
-              : properties.can_do
-          }.`;
-        } else {
-          fact += '.';
+          fact += `${hasFact ? ', который' : ''} может ${Array.isArray(properties.can_do) ? properties.can_do.join(', ') : properties.can_do}`;
+          hasFact = true;
         }
-        foundFacts.push({word, fact});
+        if (properties.related_to) {
+           fact += `. Связано с: ${Array.isArray(properties.related_to) ? properties.related_to.join(', ') : properties.related_to}`;
+           hasFact = true;
+        }
+        
+        if (hasFact) {
+            fact += '.';
+            foundFacts.push({ word, fact, weight: weights[partOfSpeech] || 1 });
+        }
       }
     }
   }
@@ -472,13 +476,15 @@ function generateConnectionResponse(userInput: string): string | null {
   if (foundFacts.length === 0) {
     return null;
   }
+  
+  // Sort facts by weight to give priority to more important words (e.g., nouns)
+  foundFacts.sort((a, b) => b.weight - a.weight);
 
   if (foundFacts.length === 1) {
     return foundFacts[0].fact;
   }
 
-  let combinedResponse =
-    'Если я правильно тебя понимаю, ты говоришь о нескольких вещах. ';
+  let combinedResponse = 'Если я правильно тебя понимаю, ты говоришь о нескольких вещах. ';
   const factStrings = foundFacts.map(f => f.fact.replace(/.$/, ''));
   combinedResponse += factStrings.join(' и ');
   combinedResponse += '. Это довольно интересное сочетание.';
@@ -513,7 +519,7 @@ async function generateCreativeResponse(
   }
   sessionMemory.lastUnknownWord = null; // Reset if user moves on
 
-  // 2. Contextual Sub-algorithm: Check for specific conversational contexts
+  // 2. Contextual Sub-algorithm (Fine-tuning simulation): Check for specific conversational contexts
   if (isPersonalResponseToWellbeing(userInput, history)) {
     const suitableResponses = [
       'Рад это слышать!',
@@ -521,9 +527,14 @@ async function generateCreativeResponse(
       'Здорово! Если что-то понадобится, я здесь.',
       'Это хорошо. Что дальше по плану?',
     ];
-    return synonymize(
-      suitableResponses[Math.floor(Math.random() * suitableResponses.length)]
-    );
+    let responses = suitableResponses;
+    const lastResponse = lastResponseMap.get('wellbeing_reply');
+     if (lastResponse && responses.length > 1) {
+      responses = responses.filter(r => r !== lastResponse);
+    }
+    const response = responses[Math.floor(Math.random() * responses.length)];
+    lastResponseMap.set('wellbeing_reply', response);
+    return synonymize(response);
   }
   
   // 3. Knowledge Base Sub-algorithm: Find a direct or fuzzy match
@@ -539,13 +550,13 @@ async function generateCreativeResponse(
     lastResponseMap.set(bestMatch.intent, response);
     
     // Clarify if the match was fuzzy
-    if (bestMatch.score < 0.95 && !userInput.includes(response)) {
+    if (bestMatch.score < 0.95 && !userInput.includes(response.split(' ')[0])) {
       return synonymize(response) + ' Я правильно тебя понял?';
     }
     return synonymize(response);
   }
 
-  // 4. Creative Connection Sub-algorithm: Use word connections
+  // 4. Creative Connection Sub-algorithm (Attention simulation): Use word connections
   const connectionResponse = generateConnectionResponse(userInput);
   if (connectionResponse) {
     return synonymize(connectionResponse);
@@ -563,16 +574,22 @@ async function generateCreativeResponse(
     'Хм, ты затронул любопытную тему. Я пытаюсь найти связи...',
     'Твой вопрос заставляет меня взглянуть на вещи под другим углом.',
     `Я размышляю над словом "${
-      wordsInInput[0] || 'это'
+      wordsInInput.find(w => w.length > 3) || wordsInInput[0] || 'это'
     }"... и что оно может означать в этом контексте. Можешь объяснить?`,
     'Это сложный вопрос. Мои алгоритмы ищут наиболее подходящий ответ.',
   ];
-  const randomIndex = Math.floor(Math.random() * thoughtfulResponses.length);
-  const response = thoughtfulResponses[randomIndex];
+  let responses = thoughtfulResponses;
+  const lastResponse = lastResponseMap.get('fallback');
+  if (lastResponse && responses.length > 1) {
+      responses = responses.filter(r => r !== lastResponse);
+  }
+  const response = responses[Math.floor(Math.random() * responses.length)];
+  lastResponseMap.set('fallback', response);
 
   // If the response asks for context, set the unknown word for the learning algorithm
-  if (response.includes(`"${wordsInInput[0] || 'это'}"`)) {
-    sessionMemory.lastUnknownWord = wordsInInput[0] || null;
+  const mentionedWord = response.match(/"(.*?)"/);
+  if (mentionedWord && mentionedWord[1]) {
+     sessionMemory.lastUnknownWord = mentionedWord[1];
   }
 
   return synonymize(response);
