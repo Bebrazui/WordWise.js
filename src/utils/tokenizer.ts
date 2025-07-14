@@ -60,31 +60,60 @@ export function indexToOneHot(index: number, vocabSize: number): Tensor {
 }
 
 /**
- * Выбирает слово из распределения вероятностей.
- * Вместо жадного выбора (argmax) используется сэмплирование, чтобы сделать текст более "живым".
- * @param predictionTensor Тензор вероятностей предсказания (после Softmax): [1, vocabSize].
+ * Выбирает слово из выходного тензора модели с учетом температуры.
+ * @param predictionLogits Тензор сырых логитов предсказания: [1, vocabSize].
  * @param indexToWord Карта индексов в слова.
+ * @param temperature Параметр температуры для сэмплирования (по умолчанию 1.0).
  * @returns Предсказанное слово.
  */
-export function getWordFromPrediction(predictionTensor: Tensor, indexToWord: Map<number, string>): string {
-  if (predictionTensor.shape.length !== 2 || predictionTensor.shape[0] !== 1) {
+export function getWordFromPrediction(predictionLogits: Tensor, indexToWord: Map<number, string>, temperature: number = 1.0): string {
+  if (predictionLogits.shape.length !== 2 || predictionLogits.shape[0] !== 1) {
     throw new Error("Prediction tensor for word selection must be [1, vocabSize].");
   }
+  const vocabSize = predictionLogits.shape[1];
+  const logits = predictionLogits.data;
 
-  const probabilities = predictionTensor.data;
-  const randomNumber = Math.random();
-  let cumulativeProbability = 0;
+  const adjustedProbs = new Float32Array(vocabSize);
+  let sumExp = 0;
 
-  for (let i = 0; i < probabilities.length; i++) {
-    cumulativeProbability += probabilities[i];
-    if (randomNumber < cumulativeProbability) {
-      return indexToWord.get(i) || '<unk>';
-    }
+  // Вычитаем максимум для численной стабильности
+  let maxLogit = logits[0];
+  for (let j = 1; j < vocabSize; j++) {
+      if (logits[j] > maxLogit) {
+          maxLogit = logits[j];
+      }
   }
 
-  // В крайнем случае, если из-за ошибок округления ничего не выбралось,
-  // возвращаем последний токен (или <unk>)
-  return indexToWord.get(probabilities.length - 1) || '<unk>';
+  for (let j = 0; j < vocabSize; j++) {
+    const exponentiated = Math.exp((logits[j] - maxLogit) / temperature);
+    adjustedProbs[j] = exponentiated;
+    sumExp += exponentiated;
+  }
+
+  // Нормализуем для получения вероятностей
+  for (let j = 0; j < vocabSize; j++) {
+    adjustedProbs[j] /= sumExp;
+  }
+
+  // Выполняем выборку (сэмплирование)
+  let randomValue = Math.random();
+  let cumulativeProbability = 0;
+  let predictedIndex = -1;
+
+  for (let j = 0; j < vocabSize; j++) {
+    cumulativeProbability += adjustedProbs[j];
+    if (randomValue <= cumulativeProbability) {
+      predictedIndex = j;
+      break;
+    }
+  }
+  
+  // Если по какой-то причине ничего не выбралось (например, NaN в вероятностях), возвращаем <unk>
+  if (predictedIndex === -1) {
+    predictedIndex = 0;
+  }
+
+  return indexToWord.get(predictedIndex) || '<unk>';
 }
 
 

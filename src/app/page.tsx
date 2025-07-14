@@ -11,7 +11,6 @@ import Link from 'next/link';
 
 import { useTrainedModel } from '@/hooks/use-trained-model';
 import { Tensor } from '@/lib/tensor';
-import { softmax } from '@/lib/layers';
 import { getWordFromPrediction } from '@/utils/tokenizer';
 
 interface ChatMessage {
@@ -50,7 +49,7 @@ export default function Home() {
         currentWord = '<unk>';
     }
 
-    let generatedSequence = [startWord]; // Начинаем последовательность с полного ввода пользователя
+    let generatedSequence = [startWord];
     let h = trainedModel.initializeStates(1).h0;
     let c = trainedModel.initializeStates(1).c0;
 
@@ -60,17 +59,16 @@ export default function Home() {
       h = nextH;
       c = nextC;
 
-      const predictionProbs = softmax(outputLogits);
-      currentWord = getWordFromPrediction(predictionProbs, indexToWord);
+      // Используем температурное сэмплирование, передавая сырые логиты
+      currentWord = getWordFromPrediction(outputLogits, indexToWord, 0.8);
       
-      // Пропускаем служебные токены
       if (currentWord === 'вопрос' || currentWord === 'ответ') continue;
 
       generatedSequence.push(currentWord);
 
       if (currentWord === '<unk>') break;
     }
-    // Убираем первое слово (которое было затравкой) и объединяем
+    
     return generatedSequence.slice(1).join(' ');
   };
 
@@ -84,15 +82,12 @@ export default function Home() {
     const currentInput = input;
     setInput('');
     setIsLoading(true);
-
-    // Имитация ответа от локальной модели
+    
     setTimeout(() => {
         let botResponseContent: string;
         if (trainedModel && vocabData) {
-            // Если модель обучена, генерируем ответ
             botResponseContent = generateTextWithModel(currentInput, 15);
         } else {
-            // Если модель не обучена, даем шаблонный ответ
             botResponseContent = `Я прототип. Модель WordWise.js еще не обучена. Перейдите в раздел обучения, чтобы научить меня отвечать.`;
         }
 
