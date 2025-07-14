@@ -215,19 +215,60 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
     return synonymize(defaultResponses[randomIndex]);
 }
 
+/**
+ * Calculates the Levenshtein distance between two strings.
+ * This is a measure of the difference between two sequences.
+ * @param a The first string.
+ * @param b The second string.
+ * @returns The Levenshtein distance.
+ */
+function levenshteinDistance(a: string, b: string): number {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  const matrix = [];
+
+  // increment along the first column of each row
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+
+  // increment each column in the first row
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  // Fill in the rest of the matrix
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // substitution
+          matrix[i][j - 1] + 1,     // insertion
+          matrix[i - 1][j] + 1      // deletion
+        );
+      }
+    }
+  }
+
+  return matrix[b.length][a.length];
+}
+
 
 /**
  * Model Q (Creative): Generates a response by finding the best matching intent or using word connections.
- * It uses a scoring mechanism to find the "ideal" response.
+ * It uses a scoring mechanism to find the "ideal" response and handles typos.
  * @param userInput The user's message.
  * @param history The conversation history.
  * @returns A response string.
  */
 function generateCreativeResponse(userInput: string, history: string[] = []): string {
   const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
-  const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
+  const wordsInInput = lowerCaseInput.split(/\s+/).filter(w => w);
 
-  // 1. Try to find a direct match in the knowledge base first
+  // 1. Try to find a direct or fuzzy match in the knowledge base first
   let bestMatch: { intent: string; score: number } | null = null;
   for (const intent in kb) {
     if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
@@ -235,12 +276,23 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     const intentData = kb[intent];
     for (const phrase of intentData.фразы) {
       const lowerPhrase = phrase.toLowerCase();
-      const phraseWords = new Set(lowerPhrase.split(/\s+/).filter(Boolean));
-      const intersection = new Set([...phraseWords].filter(x => wordsInInput.has(x)));
-      const score = intersection.size;
+      const phraseWords = lowerPhrase.split(/\s+/).filter(Boolean);
+      let currentScore = 0;
+      
+      for(const inputWord of wordsInInput) {
+        for(const phraseWord of phraseWords) {
+            // Allow for a small number of typos (Levenshtein distance)
+            // The threshold can be adjusted. e.g. 1 for short words, 2 for longer.
+            const distance = levenshteinDistance(inputWord, phraseWord);
+            const threshold = phraseWord.length > 4 ? 2 : 1;
+            if (distance <= threshold) {
+                currentScore++;
+            }
+        }
+      }
 
-      if (score > (bestMatch?.score ?? 0)) {
-        bestMatch = { intent, score };
+      if (currentScore > (bestMatch?.score ?? 0)) {
+        bestMatch = { intent, score: currentScore };
       }
     }
   }
@@ -264,7 +316,7 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     "Это интересный поворот. Дай мне секунду, чтобы обдумать это.",
     "Хм, ты затронул любопытную тему. Я пытаюсь найти связи...",
     "Твой вопрос заставляет меня взглянуть на вещи под другим углом.",
-    `Я размышляю над словом "${[...wordsInInput][0] || 'это'}"... и что оно может означать в этом контексте.`,
+    `Я размышляю над словом "${wordsInInput[0] || 'это'}"... и что оно может означать в этом контексте.`,
     "Это сложный вопрос. Мои алгоритмы ищут наиболее подходящий ответ."
   ];
   const randomIndex = Math.floor(Math.random() * thoughtfulResponses.length);
