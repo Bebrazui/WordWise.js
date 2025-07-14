@@ -188,8 +188,7 @@ export default function WordwisePage() {
 
       generatedSequence.push(currentWord);
 
-      if (currentWord === '<unk>' && i < numWords - 1) {
-          generatedSequence.push('(неизвестно)');
+      if (currentWord === '<unk>') {
           break;
       }
     }

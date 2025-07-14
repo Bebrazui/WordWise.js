@@ -62,6 +62,10 @@ export default function Home() {
 
       const predictionProbs = softmax(outputLogits);
       currentWord = getWordFromPrediction(predictionProbs, indexToWord);
+      
+      // Пропускаем служебные токены
+      if (currentWord === 'вопрос' || currentWord === 'ответ') continue;
+
       generatedSequence.push(currentWord);
 
       if (currentWord === '<unk>') break;
