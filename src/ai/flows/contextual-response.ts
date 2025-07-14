@@ -39,6 +39,7 @@ const ContextualResponseInputSchema = z.object({
     .array(z.string())
     .optional()
     .describe('The last 3 messages in the conversation.'),
+  experimental: z.boolean().optional().describe('Flag to enable experimental response generation.')
 });
 export type ContextualResponseInput = z.infer<
   typeof ContextualResponseInputSchema
@@ -515,11 +516,13 @@ function synonymize(sentence: string): string {
  * It uses a pipeline of algorithms to generate the most relevant response.
  * @param userInput The user's message.
  * @param history The conversation history.
+ * @param experimental Flag to force creative generation.
  * @returns A response string.
  */
 async function generateCreativeResponse(
   userInput: string,
-  history: string[] = []
+  history: string[] = [],
+  experimental = false
 ): Promise<string> {
     
   // --- Start of Pipeline ---
@@ -541,6 +544,15 @@ async function generateCreativeResponse(
   // Reset if user has moved on from defining a word
   if (sessionMemory.lastUnknownWord && !userInput.toLowerCase().startsWith(sessionMemory.lastUnknownWord)) {
       sessionMemory.lastUnknownWord = null;
+  }
+
+  // In experimental mode, we skip straight to the creative part
+  if (experimental) {
+      const connectionResponse = generateConnectionResponse(normalizedInput);
+      if (connectionResponse) {
+          return connectionResponse; // No synonymization to see the raw output
+      }
+      return getFallbackResponse(normalizedInput);
   }
   
   // Stage 3: Direct Response Handler
@@ -599,6 +611,6 @@ export async function contextualResponse(
   input: ContextualResponseInput
 ): Promise<ContextualResponseOutput> {
   const history = input.history || [];
-  const aiResponse = await generateCreativeResponse(input.userInput, history);
+  const aiResponse = await generateCreativeResponse(input.userInput, history, input.experimental);
   return {aiResponse};
 }

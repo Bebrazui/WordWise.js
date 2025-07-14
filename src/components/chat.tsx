@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect } from "react";
@@ -53,9 +54,17 @@ export function Chat() {
   }, [messages]);
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
+    let experimental = false;
+    let userInput = values.message;
+
+    if(userInput.startsWith('/ex ')){
+      experimental = true;
+      userInput = userInput.substring(4);
+    }
+
     const userMessage: Message = {
       id: Date.now(),
-      text: values.message,
+      text: values.message, // We show the full command in the chat
       sender: "user",
     };
 
@@ -80,8 +89,9 @@ export function Chat() {
       await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
       
       const response = await contextualResponse({ 
-        userInput: values.message,
+        userInput: userInput,
         history,
+        experimental,
       });
 
       const aiMessage: Message = {
