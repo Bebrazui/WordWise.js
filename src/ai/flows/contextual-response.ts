@@ -54,8 +54,8 @@ export type ContextualResponseOutput = z.infer<
 // --- Type Definitions ---
 type KnowledgeBase = {
   [intent: string]: {
-    фразы: string[];
-    ответы: string[];
+    phrases: string[];
+    responses: string[];
   };
 };
 
@@ -102,15 +102,61 @@ const sessionMemory = {
 // === ALGORITHM PIPELINE FOR "Bot Q (Quantum)" ====================
 // =================================================================
 
-// --- Pipeline Stage 1: Input Cleaner ---
+// --- Pipeline Stage 1: Input Cleaner & Lemmatizer ---
 /**
- * Prepares user input for processing by cleaning and normalizing it.
+ * Prepares user input for processing by cleaning, normalizing, and lemmatizing it.
  * @param userInput The raw user input.
- * @returns A cleaned, lowercased string.
+ * @returns A cleaned, lowercased string of lemmatized words.
  */
 function cleanAndNormalizeInput(userInput: string): string {
   if (!userInput) return '';
-  return userInput.toLowerCase().trim().replace(/[.,!?]/g, '');
+  const cleaned = userInput.toLowerCase().trim().replace(/[.,!?]/g, '');
+  const words = cleaned.split(/\s+/);
+  const lemmatizedWords = words.map(word => lemmatize(word));
+  return lemmatizedWords.join(' ');
+}
+
+/**
+ * Simple rule-based lemmatizer/stemmer for Russian.
+ * It's not perfect but helps handle basic word forms.
+ * @param word The word to lemmatize.
+ * @returns The lemmatized (base) form of the word.
+ */
+function lemmatize(word: string): string {
+    // Perfective -> Imperfective (simple cases)
+    if (word.endsWith('ить')) return word.slice(0, -2) + 'ить';
+    if (word.endsWith('ать')) return word.slice(0, -2) + 'ать';
+
+    // Adjective endings
+    const adjEndings = ['ый', 'ий', 'ая', 'яя', 'ое', 'ее', 'ые', 'ие', 'его', 'ого', 'ему', 'ому', 'ую', 'юю', 'ей', 'ой'];
+    for (const ending of adjEndings) {
+        if (word.endsWith(ending)) {
+            // A very simple rule: try to get a base and add a common ending.
+            // "хорошее" -> "хорош" -> "хорошо" (if in synonyms) or "хороший"
+            let base = word.slice(0, -ending.length);
+            if (syn[base + 'о']) return base + 'о';
+            if (syn[base + 'ий']) return base + 'ий';
+            return base + 'ий'; // default to masculine
+        }
+    }
+
+    // Noun endings
+    const nounEndings = ['а', 'у', 'е', 'ы', 'ом', 'ам', 'ах'];
+    for (const ending of nounEndings) {
+        if (word.length > 3 && word.endsWith(ending)) {
+            let base = word.slice(0, -ending.length);
+            // If the base form exists in our knowledge, use it.
+            if (kb[base] || wc[base] || syn[base]) return base;
+        }
+    }
+    
+    // Check if the word is already a known base form or synonym
+    if(syn[word]) return word;
+    for(const key in syn){
+        if(syn[key].includes(word)) return key;
+    }
+
+    return word; // return original if no rule matched
 }
 
 /**
@@ -224,12 +270,12 @@ const questionAboutWellbeing = [
   'как дела', 'как ты', 'как поживаешь', 'как твое', 'как сам', 'как настроение',
 ];
 const positiveUserStates = [
-  'хорошо', 'нормально', 'отлично', 'замечательно', 'прекрасно', 'в порядке', 'ничего', 'пойдет',
+  'хорошо', 'нормально', 'отлично', 'замечательно', 'прекрасно', 'порядок', 'ничего', 'пойдет', 'хороший'
 ];
 
 /**
  * Checks if the user is likely responding to a question about their well-being.
- * @param normalizedInput The user's cleaned message.
+ * @param normalizedInput The user's cleaned message (lemmatized).
  * @param history The conversation history.
  * @returns A relevant response or null.
  */
@@ -240,7 +286,8 @@ function handleWellbeingResponse(normalizedInput: string, history: string[]): st
     const wasAsked = questionAboutWellbeing.some(q => lastBotMessage.includes(q));
     if (!wasAsked) return null;
 
-    const isDirectAnswer = positiveUserStates.some(state => normalizedInput.includes(state));
+    const inputWords = normalizedInput.split(' ');
+    const isDirectAnswer = positiveUserStates.some(state => inputWords.includes(state));
     const isPersonal = ['я', 'у меня'].some(marker => normalizedInput.startsWith(marker));
     
     if (isDirectAnswer || isPersonal) {
@@ -263,16 +310,17 @@ function handleWellbeingResponse(normalizedInput: string, history: string[]): st
 // --- Pipeline Stage 5: Knowledge Base Matcher (The Strategist) ---
 /**
  * Finds the best matching intent from the knowledge base using direct and fuzzy matching.
- * @param normalizedInput The user's cleaned input.
+ * @param normalizedInput The user's cleaned and lemmatized input.
  * @returns The best match object or null.
  */
 function findBestIntentMatch(normalizedInput: string): { intent: string; score: number } | null {
   let bestMatch: { intent: string; score: number } | null = null;
   for (const intent in kb) {
-    if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
+    if (intent === 'unknown_phrase' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
 
     const intentData = kb[intent];
-    for (const phrase of intentData.фразы) {
+    for (const phrase of intentData.phrases) {
+      // Assuming phrases in KB are already lemmatized
       const lowerPhrase = phrase.toLowerCase();
       
       // Direct phrase containment check
@@ -303,7 +351,7 @@ function findBestIntentMatch(normalizedInput: string): { intent: string; score: 
 /**
  * Generates a response based on word connections if a direct intent is not found.
  * This simulates an "Attention Mechanism" by weighing words and connection types.
- * @param normalizedInput The user's cleaned message.
+ * @param normalizedInput The user's cleaned and lemmatized message.
  * @returns A generated response string or null if no connection is found.
  */
 function generateConnectionResponse(normalizedInput: string): string | null {
@@ -313,8 +361,9 @@ function generateConnectionResponse(normalizedInput: string): string | null {
     const allWordsAndSynonyms = new Set<string>();
     words.forEach(word => {
         allWordsAndSynonyms.add(word);
-        if (syn[word]) {
-            syn[word].forEach(s => allWordsAndSynonyms.add(s));
+        const baseWord = syn[word] ? word : Object.keys(syn).find(key => syn[key].includes(word));
+        if (baseWord && syn[baseWord]) {
+            syn[baseWord].forEach(s => allWordsAndSynonyms.add(s));
         }
     });
 
@@ -383,17 +432,19 @@ function generateConnectionResponse(normalizedInput: string): string | null {
 // --- Pipeline Stage 7: Observer & Smart Fallback ---
 /**
  * Provides a thoughtful default response and triggers the learning mechanism.
- * @param normalizedInput The cleaned user input.
+ * @param normalizedInput The cleaned and lemmatized user input.
  * @returns A fallback response string.
  */
 function getFallbackResponse(normalizedInput: string): string {
     const wordsInInput = normalizedInput.split(/\s+/).filter(w => w);
     // Try to find a word that is not a known synonym or in the knowledge base
-    let unknownWord = wordsInInput.find(w => !syn[w] && !Object.keys(kb).some(k => kb[k].фразы.includes(w)));
+    let unknownWord = wordsInInput.find(w => !syn[w] && !Object.keys(kb).some(k => kb[k].phrases.includes(w)));
     
     // If all words are known, pick the most complex one
-    if (!unknownWord) {
-        unknownWord = wordsInInput.sort((a, b) => b.length - a.length)[0] || 'это';
+    if (!unknownWord && wordsInInput.length > 0) {
+        unknownWord = wordsInInput.sort((a, b) => b.length - a.length)[0];
+    } else if (!unknownWord) {
+        unknownWord = 'это';
     }
 
 
@@ -494,7 +545,7 @@ async function generateCreativeResponse(
   const bestMatch = findBestIntentMatch(normalizedInput);
 
   if (bestMatch && bestMatch.score > 0.6) { // Confidence threshold
-    let responses = kb[bestMatch.intent].ответы;
+    let responses = kb[bestMatch.intent].responses;
     // Avoid repetition
     const lastResponse = lastResponseMap.get(bestMatch.intent);
     if (lastResponse && responses.length > 1) {
@@ -537,4 +588,3 @@ export async function contextualResponse(
   const aiResponse = await generateCreativeResponse(input.userInput, history);
   return {aiResponse};
 }
-
