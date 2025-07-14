@@ -30,7 +30,6 @@ const ContextualResponseInputSchema = z.object({
   userInput: z
     .string()
     .describe('The user input to which the AI should respond.'),
-  model: z.enum(['R', 'Q']).describe('The model to use: R for Rigid, Q for Creative.'),
   history: z
     .array(z.string())
     .optional()
@@ -81,45 +80,16 @@ const syn = synonyms as Synonyms;
 const wc = wordConnections as WordConnections;
 const lw = learnedWords as LearnedWords;
 
-const defaultResponses = kb['неизвестная_фраза'].ответы;
-
 // --- State for avoiding repetition and simulating learning ---
 const lastResponseMap = new Map<string, string>();
 const sessionMemory = {
   lastUnknownWord: null as string | null,
 };
 
-// --- Bot's "Brain" ---
-
-/**
- * A simple and safe calculator function to evaluate arithmetic expressions.
- * It respects parentheses and order of operations (*, / before +, -).
- * @param expression The mathematical expression to evaluate.
- * @returns The result of the calculation or null if the expression is invalid.
- */
-function calculateExpression(expression: string): number | null {
-  try {
-    // Improved regex to better extract expressions from text
-    const sanitizedExpression = expression.replace(/[^-()\d/*+.]/g, ' ').trim();
-    if (!sanitizedExpression) {
-      return null;
-    }
-
-    // eslint-disable-next-line no-new-func
-    const result = new Function(`return ${sanitizedExpression}`)();
-
-    if (typeof result !== 'number' || !isFinite(result)) {
-      return null;
-    }
-    return result;
-  } catch (error) {
-    return null;
-  }
-}
+// --- Bot's "Brain" (Model Q - Quantum) ---
 
 /**
  * Replaces words in a sentence with their synonyms to make it more dynamic.
- * Increased chance to synonymize.
  * @param sentence The sentence to process.
  * @returns A sentence with some words replaced by synonyms.
  */
@@ -128,11 +98,9 @@ function synonymize(sentence: string): string {
   const newWords = words.map(word => {
     const lowerWord = word.toLowerCase();
     const synonymList = syn[lowerWord];
-    if (synonymList && Math.random() < 0.75) {
-      // 75% chance to replace
+    if (synonymList && Math.random() < 0.75) { // Increased chance to 75%
       const randomSynonym =
         synonymList[Math.floor(Math.random() * synonymList.length)];
-      // Preserve capitalization
       if (word.length > 0 && word[0] === word[0].toUpperCase()) {
         return randomSynonym.charAt(0).toUpperCase() + randomSynonym.slice(1);
       }
@@ -141,112 +109,6 @@ function synonymize(sentence: string): string {
     return word;
   });
   return newWords.join('');
-}
-
-/**
- * Model R (Rigid): Generates a response based on strict keyword matching from the knowledge base.
- * @param userInput The user's message.
- * @param history The conversation history.
- * @returns A response string.
- */
-function generateRigidResponse(
-  userInput: string,
-  history: string[] = []
-): string {
-  const mathExpressionRegex =
-    /(?:реши|посчитай|сколько будет)\s*([0-9+\-*/().\s]+)|((?:\d|\.)+\s*[+\-*/]\s*(?:\d|\.)+)/gi;
-  const match = mathExpressionRegex.exec(userInput);
-
-  if (match) {
-    const expression = match[1] || match[2];
-    if (expression) {
-      const result = calculateExpression(expression);
-      if (result !== null) {
-        return `Результат: ${result}`;
-      }
-    }
-  }
-
-  const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
-  const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
-
-  let bestMatch: {intent: string; score: number} | null = null;
-
-  // Use history for context, but prioritize the current user input.
-  const contextText = [...history, userInput].join(' ');
-  const lowerCaseContext = contextText.toLowerCase().replace(/[.,!?]/g, '');
-  const wordsInContext = new Set(lowerCaseContext.split(/\s+/).filter(w => w));
-
-  // Calculate best match from knowledge base
-  for (const intent in kb) {
-    if (
-      intent === 'неизвестная_фраза' ||
-      !Object.prototype.hasOwnProperty.call(kb, intent)
-    )
-      continue;
-
-    const intentData = kb[intent];
-    let maxScoreForIntent = 0;
-
-    // Score based on direct match with user's last message
-    for (const phrase of intentData.фразы) {
-      const lowerPhrase = phrase.toLowerCase();
-      
-      if (lowerCaseInput.includes(lowerPhrase) && lowerPhrase.length > 0) {
-        const score = lowerPhrase.length / lowerCaseInput.length;
-        if (score > maxScoreForIntent) {
-            maxScoreForIntent = score;
-        }
-      }
-
-      const phraseWords = new Set(lowerPhrase.split(/\s+/).filter(Boolean));
-
-      const intersection = new Set(
-        [...phraseWords].filter(x => wordsInInput.has(x))
-      );
-      const union = new Set([...phraseWords, ...wordsInInput]);
-      const jaccardSimilarity = union.size > 0 ? intersection.size / union.size : 0;
-
-      if (jaccardSimilarity > maxScoreForIntent) {
-        maxScoreForIntent = jaccardSimilarity;
-      }
-    }
-
-    // Boost score based on context from history
-    const contextIntersection = new Set(
-      [...intentData.фразы.flatMap(p => p.toLowerCase().split(/\s+/))].filter(x =>
-        wordsInContext.has(x)
-      )
-    );
-    const contextScore =
-      wordsInContext.size > 0
-        ? contextIntersection.size / wordsInContext.size
-        : 0;
-
-    // Give much higher weight to the last message
-    const finalScore = maxScoreForIntent * 0.8 + contextScore * 0.2;
-
-    if (finalScore > (bestMatch?.score ?? 0)) {
-      bestMatch = {intent, score: finalScore};
-    }
-  }
-
-  // Adjust threshold for better accuracy
-  if (bestMatch && bestMatch.score > 0.4) {
-    let responses = kb[bestMatch.intent].ответы;
-    // Avoid repeating the last response for this intent
-    const lastResponse = lastResponseMap.get(bestMatch.intent);
-    if (lastResponse && responses.length > 1) {
-      responses = responses.filter(r => r !== lastResponse);
-    }
-    const response = responses[Math.floor(Math.random() * responses.length)];
-    lastResponseMap.set(bestMatch.intent, response);
-    return synonymize(response);
-  }
-
-  // Fallback to default response if no good match is found
-  const randomIndex = Math.floor(Math.random() * defaultResponses.length);
-  return synonymize(defaultResponses[randomIndex]);
 }
 
 /**
@@ -287,54 +149,34 @@ function levenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
-const personalPronounMarkers = ['я', 'у меня', 'мой', 'мне', 'я сам'];
-const questionAboutWellbeing = [
-  'как дела',
-  'как ты',
-  'как поживаешь',
-  'как твое',
-  'как сам',
-  'как настроение',
-];
-const positiveUserStates = [
-  'хорошо',
-  'нормально',
-  'отлично',
-  'замечательно',
-  'прекрасно',
-  'в порядке',
-  'ничего',
-  'пойдет',
-];
 
+// --- Pipeline Stage 1: Direct Response Handler ---
 /**
- * Checks if the user is likely responding to a question about their well-being.
- * @param userInput The user's current message.
+ * Handles simple, direct responses to bot's questions, like "нет" to "Я правильно тебя понял?".
+ * This is the first check to avoid misinterpretation loops.
+ * @param userInput The user's message.
  * @param history The conversation history.
- * @returns true if it's likely a personal response to a well-being question.
+ * @returns A specific response or null if no direct response context is found.
  */
-function isPersonalResponseToWellbeing(
-  userInput: string,
-  history: string[]
-): boolean {
-  if (history.length === 0) return false;
+function handleDirectResponse(userInput: string, history: string[]): string | null {
+    if (history.length === 0) return null;
+    
+    const lowerInput = userInput.toLowerCase().trim().replace(/[.,!?]/g, '');
+    const lastBotMessage = history[history.length - 1].toLowerCase();
 
-  const lowerInput = userInput.toLowerCase().replace(/[.,!?]/g, '').trim();
-  const lastBotMessage = history[history.length - 1].toLowerCase();
+    if (lastBotMessage.includes("я правильно тебя понял?")) {
+        if (lowerInput === "нет" || lowerInput === "неправильно") {
+            return "Понял, моя ошибка. Попробуй, пожалуйста, перефразировать свой вопрос, чтобы я лучше понял.";
+        }
+        if (lowerInput === "да" || lowerInput === "правильно") {
+            return "Отлично! Рад, что мы на одной волне.";
+        }
+    }
 
-  const wasAsked = questionAboutWellbeing.some(q => lastBotMessage.includes(q));
-  if (!wasAsked) {
-    return false;
-  }
-
-  const isPersonal = personalPronounMarkers.some(marker =>
-    lowerInput.startsWith(marker)
-  );
-  
-  const isDirectAnswer = positiveUserStates.some(state => lowerInput.includes(state));
-
-  return isPersonal || isDirectAnswer;
+    return null;
 }
+
+// --- Pipeline Stage 2: Learning Algorithm ---
 
 /**
  * Checks if the user is defining the last unknown word.
@@ -346,7 +188,6 @@ function isDefiningUnknownWord(userInput: string): string | null {
     return null;
   }
   const lowerInput = userInput.toLowerCase();
-  // Simple patterns to detect a definition, e.g., "X means Y", "X is Y"
   const patterns = [
     new RegExp(`^${sessionMemory.lastUnknownWord}\\s*-\\s*(.+)`),
     new RegExp(`^${sessionMemory.lastUnknownWord}\\s*это\\s*(.+)`),
@@ -373,8 +214,6 @@ async function saveLearnedWord(word: string, definition: string): Promise<void> 
 
   try {
     await new Promise<void>((resolve, reject) => {
-      // NOTE: In a real Node.js environment, you would use `fs.promises.writeFile`.
-      // Here we use the callback version to match the mock.
       fs.writeFile(
         filePath,
         JSON.stringify(updatedLearnedWords, null, 2),
@@ -383,7 +222,6 @@ async function saveLearnedWord(word: string, definition: string): Promise<void> 
             console.error('Failed to write to learned-words.json', err);
             reject(err);
           } else {
-            // Update the in-memory copy as well
             Object.assign(lw, updatedLearnedWords);
             resolve();
           }
@@ -394,6 +232,45 @@ async function saveLearnedWord(word: string, definition: string): Promise<void> 
     // Error is already logged
   }
 }
+
+// --- Pipeline Stage 3: Conversational Context Analyzer ---
+
+const personalPronounMarkers = ['я', 'у меня', 'мой', 'мне', 'я сам'];
+const questionAboutWellbeing = [
+  'как дела', 'как ты', 'как поживаешь', 'как твое', 'как сам', 'как настроение',
+];
+const positiveUserStates = [
+  'хорошо', 'нормально', 'отлично', 'замечательно', 'прекрасно', 'в порядке', 'ничего', 'пойдет',
+];
+
+/**
+ * Checks if the user is likely responding to a question about their well-being.
+ * @param userInput The user's current message.
+ * @param history The conversation history.
+ * @returns true if it's likely a personal response to a well-being question.
+ */
+function isPersonalResponseToWellbeing(userInput: string, history: string[]): boolean {
+  if (history.length === 0) return false;
+
+  const lowerInput = userInput.toLowerCase().replace(/[.,!?]/g, '').trim();
+  const lastBotMessage = history[history.length - 1].toLowerCase();
+
+  const wasAsked = questionAboutWellbeing.some(q => lastBotMessage.includes(q));
+  if (!wasAsked) {
+    return false;
+  }
+
+  const isPersonal = personalPronounMarkers.some(marker =>
+    lowerInput.startsWith(marker)
+  );
+  
+  const isDirectAnswer = positiveUserStates.some(state => lowerInput.includes(state));
+
+  return isPersonal || isDirectAnswer;
+}
+
+
+// --- Pipeline Stage 4: Knowledge Base Matcher ---
 
 /**
  * Finds the best matching intent from the knowledge base using direct and fuzzy matching.
@@ -409,16 +286,16 @@ function findBestIntentMatch(lowerCaseInput: string): { intent: string; score: n
     for (const phrase of intentData.фразы) {
       const lowerPhrase = phrase.toLowerCase();
       
-      if (lowerCaseInput.includes(lowerPhrase)) {
+      if (lowerCaseInput.includes(lowerPhrase) && lowerPhrase.length > 0) {
         const score = lowerPhrase.length / lowerCaseInput.length;
         if (score > (bestMatch?.score ?? 0)) {
           bestMatch = { intent, score };
         }
       } else {
         const distance = levenshteinDistance(lowerCaseInput, lowerPhrase);
-        const threshold = Math.floor(lowerPhrase.length / 3);
-        if (distance <= threshold) {
-          const score = (1 - distance / lowerPhrase.length) * 0.9;
+        const threshold = Math.floor(lowerPhrase.length * 0.4); // Stricter threshold
+        if (distance <= threshold && lowerPhrase.length > 3) {
+          const score = (1 - distance / lowerPhrase.length) * 0.9; // Fuzzy match has a penalty
           if (score > (bestMatch?.score ?? 0)) {
             bestMatch = { intent, score };
           }
@@ -430,10 +307,11 @@ function findBestIntentMatch(lowerCaseInput: string): { intent: string; score: n
 }
 
 
+// --- Pipeline Stage 5: Creative Connection Algorithm ---
+
 /**
- * Helper for Model Q. Generates a response based on word connections if a direct intent is not found.
- * This version is more "creative" and tries to combine information.
- * It simulates an "Attention Mechanism" by weighing words.
+ * Generates a response based on word connections if a direct intent is not found.
+ * This simulates an "Attention Mechanism" by weighing words.
  * @param userInput The user's message.
  * @returns A generated response string or null if no connection is found.
  */
@@ -485,7 +363,6 @@ function generateConnectionResponse(userInput: string): string | null {
     return null;
   }
   
-  // Sort facts by weight to give priority to more important words (e.g., nouns)
   foundFacts.sort((a, b) => b.weight - a.weight);
 
   if (foundFacts.length === 1) {
@@ -500,35 +377,10 @@ function generateConnectionResponse(userInput: string): string | null {
   return combinedResponse;
 }
 
-/**
- * Handles simple, direct responses to bot's questions, like "нет" to "Я правильно тебя понял?".
- * @param userInput The user's message.
- * @param history The conversation history.
- * @returns A specific response or null if no direct response context is found.
- */
-function handleDirectResponse(userInput: string, history: string[]): string | null {
-    if (history.length === 0) return null;
-    
-    const lowerInput = userInput.toLowerCase().trim();
-    const lastBotMessage = history[history.length - 1].toLowerCase();
-
-    if (lastBotMessage.includes("я правильно тебя понял?")) {
-        if (lowerInput === "нет" || lowerInput === "неправильно") {
-            return "Понял, моя ошибка. Попробуй, пожалуйста, перефразировать свой вопрос, чтобы я лучше понял.";
-        }
-        if (lowerInput === "да" || lowerInput === "правильно") {
-            return "Отлично! Рад, что мы на одной волне.";
-        }
-    }
-
-    return null;
-}
-
 
 /**
- * Model Q (Creative): Generates a response by finding the best matching intent or using word connections.
- * It uses a scoring mechanism to find the "ideal" response and handles typos.
- * It can also learn new words during the conversation.
+ * The main generation function for Model Q.
+ * It uses a pipeline of algorithms to generate the most relevant response.
  * @param userInput The user's message.
  * @param history The conversation history.
  * @returns A response string.
@@ -540,15 +392,15 @@ async function generateCreativeResponse(
   const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
   const wordsInInput = lowerCaseInput.split(/\s+/).filter(w => w);
 
-  // --- Start of Sub-algorithms Pipeline ---
+  // --- Start of Pipeline ---
   
-  // 0. Direct Response check: Handle simple "yes/no" to bot's questions first.
+  // 1. Direct Response check: Handle simple "yes/no" to bot's questions first.
   const directResponse = handleDirectResponse(userInput, history);
   if (directResponse) {
       return directResponse;
   }
 
-  // 1. Learning Sub-algorithm: Check if user is defining a word
+  // 2. Learning Sub-algorithm: Check if user is defining a word
   const definition = isDefiningUnknownWord(userInput);
   if (definition && sessionMemory.lastUnknownWord) {
     const learnedWord = sessionMemory.lastUnknownWord;
@@ -558,13 +410,10 @@ async function generateCreativeResponse(
   }
   sessionMemory.lastUnknownWord = null; // Reset if user moves on
 
-  // 2. Contextual Sub-algorithm (Fine-tuning simulation): Check for specific conversational contexts
+  // 3. Contextual Sub-algorithm: Check for specific conversational contexts
   if (isPersonalResponseToWellbeing(userInput, history)) {
     const suitableResponses = [
-      'Рад это слышать!',
-      'Отлично! Чем теперь займемся?',
-      'Здорово! Если что-то понадобится, я здесь.',
-      'Это хорошо. Что дальше по плану?',
+      'Рад это слышать!', 'Отлично! Чем теперь займемся?', 'Здорово! Если что-то понадобится, я здесь.', 'Это хорошо. Что дальше по плану?',
     ];
     let responses = suitableResponses;
     const lastResponse = lastResponseMap.get('wellbeing_reply');
@@ -576,10 +425,10 @@ async function generateCreativeResponse(
     return synonymize(response);
   }
   
-  // 3. Knowledge Base Sub-algorithm: Find a direct or fuzzy match
+  // 4. Knowledge Base Sub-algorithm: Find a direct or fuzzy match
   const bestMatch = findBestIntentMatch(lowerCaseInput);
 
-  if (bestMatch && bestMatch.score > 0.5) {
+  if (bestMatch && bestMatch.score > 0.5) { // Stricter confidence threshold
     let responses = kb[bestMatch.intent].ответы;
     const lastResponse = lastResponseMap.get(bestMatch.intent);
     if (lastResponse && responses.length > 1) {
@@ -588,34 +437,31 @@ async function generateCreativeResponse(
     const response = responses[Math.floor(Math.random() * responses.length)];
     lastResponseMap.set(bestMatch.intent, response);
     
-    // Clarify if the match was fuzzy and not a direct response to a question
-    if (bestMatch.score < 0.95 && !isPersonalResponseToWellbeing(userInput, history)) {
+    // Clarify only if the match was fuzzy (not a direct full phrase match)
+    if (bestMatch.score < 0.95 && bestMatch.score > 0.5) {
       return synonymize(response) + ' Я правильно тебя понял?';
     }
     return synonymize(response);
   }
 
-  // 4. Creative Connection Sub-algorithm (Attention simulation): Use word connections
+  // 5. Creative Connection Sub-algorithm: Use word connections
   const connectionResponse = generateConnectionResponse(userInput);
   if (connectionResponse) {
     return synonymize(connectionResponse);
   }
   
-  // 5. Learned Knowledge Sub-algorithm: Check persistent learned words
+  // 6. Learned Knowledge Sub-algorithm: Check persistent learned words
   const learnedMeaning = lw[lowerCaseInput as keyof typeof lw];
   if (learnedMeaning) {
     return `Я помню, ты говорил, что ${lowerCaseInput} - это ${learnedMeaning}. Хочешь поговорить об этом?`;
   }
 
-  // 6. Fallback Sub-algorithm: Thoughtful default response
+  // 7. Fallback Sub-algorithm: Thoughtful default response with learning trigger
   const thoughtfulResponses = [
-    'Это интересный поворот. Дай мне секунду, чтобы обдумать это.',
-    'Хм, ты затронул любопытную тему. Я пытаюсь найти связи...',
-    'Твой вопрос заставляет меня взглянуть на вещи под другим углом.',
     `Я размышляю над словом "${
       wordsInInput.find(w => w.length > 3) || wordsInInput[0] || 'это'
     }"... и что оно может означать в этом контексте. Можешь объяснить?`,
-    'Это сложный вопрос. Мои алгоритмы ищут наиболее подходящий ответ.',
+    'Это сложный вопрос. Мои алгоритмы ищут наиболее подходящий ответ, но пока безуспешно. Попробуешь перефразировать?',
   ];
   let responses = thoughtfulResponses;
   const lastResponse = lastResponseMap.get('fallback');
@@ -625,7 +471,6 @@ async function generateCreativeResponse(
   const response = responses[Math.floor(Math.random() * responses.length)];
   lastResponseMap.set('fallback', response);
 
-  // If the response asks for context, set the unknown word for the learning algorithm
   const mentionedWord = response.match(/"(.*?)"/);
   if (mentionedWord && mentionedWord[1]) {
      sessionMemory.lastUnknownWord = mentionedWord[1];
@@ -640,14 +485,7 @@ async function generateCreativeResponse(
 export async function contextualResponse(
   input: ContextualResponseInput
 ): Promise<ContextualResponseOutput> {
-  let aiResponse: string;
   const history = input.history || [];
-
-  if (input.model === 'Q') {
-    aiResponse = await generateCreativeResponse(input.userInput, history);
-  } else {
-    aiResponse = generateRigidResponse(input.userInput, history);
-  }
-
+  const aiResponse = await generateCreativeResponse(input.userInput, history);
   return {aiResponse};
 }

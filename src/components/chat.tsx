@@ -10,7 +10,7 @@ import { Form, FormControl, FormField, FormItem } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Send, Bot, User, BrainCircuit, BotIcon } from "lucide-react";
+import { Send, Bot, User, BrainCircuit } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
@@ -21,22 +21,19 @@ type Message = {
   isTyping?: boolean;
 };
 
-type ModelType = 'R' | 'Q';
-
 const formSchema = z.object({
   message: z.string().min(1, "Message cannot be empty"),
 });
 
 const initialMessage: Message = {
   id: 1,
-  text: "Привет! Я WordWise, ваш личный помощник. Выберите модель и давайте пообщаемся.",
+  text: "Привет! Я WordWise, ваш личный помощник. Давайте пообщаемся.",
   sender: "ai",
 };
 
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([initialMessage]);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeModel, setActiveModel] = useState<ModelType>('Q');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -75,17 +72,15 @@ export function Chat() {
     setIsLoading(true);
 
     try {
-      // Get last 3 messages for context, excluding the initial one.
       const history = newMessages
-        .filter(m => m.id !== initialMessage.id) // Exclude the initial greeting
-        .slice(-4, -1) // Get up to 3 previous messages (user + ai + user) before the current one
+        .filter(m => m.id !== initialMessage.id) 
+        .slice(-4, -1) 
         .map(m => m.text);
 
       await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
       
       const response = await contextualResponse({ 
-        userInput: values.message, 
-        model: activeModel,
+        userInput: values.message,
         history,
       });
 
@@ -114,22 +109,12 @@ export function Chat() {
         <h1 className="text-xl font-bold text-card-foreground">WordWise Chat</h1>
         <div className="flex items-center gap-2">
             <Button
-                variant={activeModel === 'R' ? 'secondary' : 'ghost'}
+                variant={'secondary'}
                 size="sm"
-                onClick={() => setActiveModel('R')}
-                className="gap-2"
-            >
-                <BotIcon className="h-4 w-4"/>
-                Bot R 0.1
-            </Button>
-            <Button
-                variant={activeModel === 'Q' ? 'secondary' : 'ghost'}
-                size="sm"
-                onClick={() => setActiveModel('Q')}
-                className="gap-2"
+                className="gap-2 pointer-events-none"
             >
                 <BrainCircuit className="h-4 w-4"/>
-                Bot Q 0.1
+                Bot Q 0.2
             </Button>
         </div>
       </header>
