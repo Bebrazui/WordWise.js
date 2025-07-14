@@ -76,7 +76,7 @@ export default function WordwisePage() {
     const optimizer = optimizerRef.current!;
     const { wordToIndex, vocabSize } = vocabDataRef.current!;
 
-    const words = textCorpus.toLowerCase().match(/\b\w+\b/g) || [];
+    const words = textCorpus.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
     if (words.length < 2) {
         setStatus('Недостаточно слов для обучения в корпусе.');
         setIsTraining(false);
@@ -185,7 +185,7 @@ export default function WordwisePage() {
           <Card>
             <CardHeader>
               <CardTitle>Шаг 1: Подготовьте данные</CardTitle>
-              <CardDescription>Введите текст на английском языке, на котором будет учиться модель. Чем больше текста, тем лучше результат.</CardDescription>
+              <CardDescription>Введите текст, на котором будет учиться модель. Чем больше текста, тем лучше результат. Поддерживаются русский и английский языки.</CardDescription>
             </CardHeader>
             <CardContent>
               <Label htmlFor="corpus">Ваш обучающий корпус:</Label>

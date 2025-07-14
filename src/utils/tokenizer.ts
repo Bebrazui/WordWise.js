@@ -7,8 +7,8 @@ import { Tensor } from '../lib/tensor';
  * @returns Объект со словарем (массив слов), маппингами слов в индексы и обратно, и размером словаря.
  */
 export function buildVocabulary(text: string): { vocab: string[]; wordToIndex: Map<string, number>; indexToWord: Map<number, string>; vocabSize: number } {
-  // Простая токенизация: разбиваем на слова, убираем знаки препинания, переводим в нижний регистр
-  const words = text.toLowerCase().match(/\b\w+\b/g) || [];
+  // Улучшенная токенизация: разбиваем на слова (латиница и кириллица), переводим в нижний регистр
+  const words = text.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
   const uniqueWords = Array.from(new Set(words));
   const vocab = ['<unk>', ...uniqueWords]; // Добавляем токен для неизвестных слов на 0-й позиции
   const wordToIndex = new Map(vocab.map((word, i) => [word, i]));
