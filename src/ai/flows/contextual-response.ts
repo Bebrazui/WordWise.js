@@ -92,27 +92,41 @@ function synonymize(sentence: string): string {
  * @returns A response string.
  */
 function generateRigidResponse(userInput: string, history: string[] = []): string {
-  const fullInput = [...history, userInput].join(' ').toLowerCase().replace(/[.,!?]/g, '');
-  const inputWords = new Set(fullInput.split(/\s+/).filter(w => w.length > 1));
+    const fullInput = [...history, userInput].join(' ');
+    const lowerCaseInput = fullInput.toLowerCase().replace(/[.,!?]/g, '');
+    const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
 
-  for (const intent in kb) {
-    if (Object.prototype.hasOwnProperty.call(kb, intent)) {
-      const intentData = kb[intent];
-      for (const phrase of intentData.фразы) {
-        const phraseWords = new Set(phrase.toLowerCase().split(/\s+/));
-        const intersection = new Set([...phraseWords].filter(x => inputWords.has(x)));
-        // If any word from the knowledge base phrase is in the user input, we have a match.
-        if (intersection.size > 0) {
-           const responses = intentData.ответы;
-           const randomIndex = Math.floor(Math.random() * responses.length);
-           return synonymize(responses[randomIndex]);
+    let bestMatch: { intent: string; score: number } | null = null;
+
+    // Calculate best match from knowledge base using Jaccard similarity
+    for (const intent in kb) {
+        if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
+
+        const intentData = kb[intent];
+        for (const phrase of intentData.фразы) {
+            const lowerPhrase = phrase.toLowerCase();
+            const phraseWords = new Set(lowerPhrase.split(/\s+/));
+            
+            const intersection = new Set([...phraseWords].filter(x => wordsInInput.has(x)));
+            const union = new Set([...phraseWords, ...wordsInInput]);
+            const score = union.size > 0 ? intersection.size / union.size : 0;
+
+            if (score > (bestMatch?.score ?? 0)) {
+                bestMatch = { intent, score };
+            }
         }
-      }
     }
-  }
 
-  const randomIndex = Math.floor(Math.random() * defaultResponses.length);
-  return synonymize(defaultResponses[randomIndex]);
+    // Decide if the match is good enough
+    if (bestMatch && bestMatch.score > 0.1) { // Threshold can be adjusted
+        const responses = kb[bestMatch.intent].ответы;
+        const randomIndex = Math.floor(Math.random() * responses.length);
+        return synonymize(responses[randomIndex]);
+    }
+
+    // Fallback to default response if no good match is found
+    const randomIndex = Math.floor(Math.random() * defaultResponses.length);
+    return synonymize(defaultResponses[randomIndex]);
 }
 
 
@@ -172,9 +186,13 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
 
     // 3. If no good match, ALWAYS try to generate from word connections.
     const connectionResponse = generateConnectionResponse(userInput);
-    // Even if the response is null, we pass it to synonymize, which will just return it.
-    // The final fallback will handle the null case.
-    return synonymize(connectionResponse || "Хм, интересный вопрос. Дай-ка подумать...");
+    
+    // 4. Fallback to a creative default if no connection is found
+    if (connectionResponse) {
+        return synonymize(connectionResponse);
+    }
+    
+    return synonymize("Хм, интересный вопрос. Дай-ка подумать...");
 }
 
 /**
@@ -240,11 +258,12 @@ export async function contextualResponse(
   input: ContextualResponseInput
 ): Promise<ContextualResponseOutput> {
   let aiResponse: string;
+  const history = input.history || [];
 
   if (input.model === 'Q') {
-    aiResponse = generateCreativeResponse(input.userInput, input.history);
+    aiResponse = generateCreativeResponse(input.userInput, history);
   } else {
-    aiResponse = generateRigidResponse(input.userInput, input.history);
+    aiResponse = generateRigidResponse(input.userInput, history);
   }
 
   return {aiResponse};
