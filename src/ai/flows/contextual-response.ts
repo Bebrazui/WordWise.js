@@ -135,7 +135,7 @@ function synonymize(sentence: string): string {
 function generateRigidResponse(userInput: string, history: string[] = []): string {
     // 1. Check for a mathematical expression first.
     // This regex extracts potential math expressions from the text.
-    const mathExpressionRegex = /((?:\d+\s*[+\-*/]\s*)+\d+)/g;
+    const mathExpressionRegex = /((?:\d|\.)+\s*[+\-*/]\s*(?:\d|\.)+)/g;
     const potentialExpression = userInput.match(mathExpressionRegex)?.[0];
 
     if (potentialExpression) {
@@ -149,30 +149,59 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
     const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
 
     let bestMatch: { intent: string; score: number } | null = null;
-
-    // Use the latest user input first for matching
+    
+    // Combine history with current input for context, but prioritize current input for matching.
     const textToAnalyze = [userInput, ...history].join(' ');
     const lowerCaseText = textToAnalyze.toLowerCase().replace(/[.,!?]/g, '');
     const wordsInText = new Set(lowerCaseText.split(/\s+/).filter(w => w));
 
-    // Calculate best match from knowledge base using Jaccard similarity on the LATEST user input first
+
+    // Calculate best match from knowledge base
     for (const intent in kb) {
         if (intent === 'неизвестная_фраза' || !Object.prototype.hasOwnProperty.call(kb, intent)) continue;
 
         const intentData = kb[intent];
+        let highestScoreForIntent = 0;
+
         for (const phrase of intentData.фразы) {
             const lowerPhrase = phrase.toLowerCase();
-            const phraseWords = new Set(lowerPhrase.split(/\s+/));
+            const phraseWords = new Set(lowerPhrase.split(/\s+/).filter(Boolean));
             
-            const intersection = new Set([...phraseWords].filter(x => wordsInInput.has(x)));
-            const union = new Set([...phraseWords, ...wordsInInput]);
-            const score = union.size > 0 ? intersection.size / union.size : 0;
+            // Check for partial matches (e.g., "привет" in "приветик")
+            const intersection = new Set([...phraseWords].filter(x => {
+                for (const inputWord of wordsInInput) {
+                    if (inputWord.includes(x) || x.includes(inputWord)) {
+                        return true;
+                    }
+                }
+                return false;
+            }));
 
-            if (score > (bestMatch?.score ?? 0)) {
-                bestMatch = { intent, score };
+            const union = new Set([...phraseWords, ...wordsInInput]);
+            const score = union.size > 0 ? intersection.size / union.size : 0; // Jaccard similarity
+            
+            if (score > highestScoreForIntent) {
+                highestScoreForIntent = score;
             }
         }
+        
+        // Boost score if the intent is more relevant to the whole conversation context
+        const contextIntersection = new Set([...wordsInText].filter(x => {
+             for (const phrase of intentData.фразы) {
+                if(phrase.toLowerCase().includes(x)) return true;
+             }
+             return false;
+        }));
+        const contextScore = contextIntersection.size / wordsInText.size;
+
+
+        const finalScore = (highestScoreForIntent * 0.7) + (contextScore * 0.3);
+
+        if (finalScore > (bestMatch?.score ?? 0)) {
+            bestMatch = { intent, score: finalScore };
+        }
     }
+
 
     // Decide if the match is good enough
     if (bestMatch && bestMatch.score > 0.1) { // Threshold can be adjusted
@@ -209,7 +238,7 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
 
         for (const phrase of intentData.фразы) {
             const lowerPhrase = phrase.toLowerCase();
-            const phraseWords = new Set(lowerPhrase.split(/\s+/));
+            const phraseWords = new Set(lowerPhrase.split(/\s+/).filter(Boolean));
             const intersection = new Set([...phraseWords].filter(x => {
                 // Check for partial matches (e.g., "привет" in "приветик")
                 for (const inputWord of wordsInInput) {
