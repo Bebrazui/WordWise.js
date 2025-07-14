@@ -16,6 +16,7 @@ export class Tensor {
   _parents: { tensor: Tensor, gradFn: (grad: Tensor) => Tensor }[] = [];
   
   _isDetached: boolean = false; // Флаг для отсоединения от графа вычислений
+  name: string = ''; // Имя тензора для сериализации
 
   /**
    * Создает новый экземпляр Tensor.

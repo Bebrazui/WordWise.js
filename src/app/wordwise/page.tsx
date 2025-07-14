@@ -1,16 +1,15 @@
-
 // src/app/wordwise/page.tsx
 "use client";
 
 import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Info } from 'lucide-react';
+import { Info, Upload, Download } from 'lucide-react';
 
 import { Tensor } from '../../lib/tensor';
 import { crossEntropyLossWithSoftmaxGrad } from '../../lib/layers';
 import { SGD } from '../../lib/optimizer';
-import { WordWiseModel } from '../../lib/model';
+import { WordWiseModel, serializeModel, deserializeModel } from '../../lib/model';
 import { buildVocabulary, wordsToInputTensors, wordsToTargetTensors, getWordFromPrediction, createBatches } from '../../utils/tokenizer';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -21,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Slider } from '@/components/ui/slider';
 import { PredictionVisualizer, Prediction } from '@/components/ui/prediction-visualizer';
+import { useToast } from '@/hooks/use-toast';
 
 import { useTrainedModel } from '@/hooks/use-trained-model';
 
@@ -39,6 +39,7 @@ export default function WordwisePage() {
   const [numEpochs, setNumEpochs] = useState(500);
 
   const { setTrainedModel, setVocabData, temperature, setTemperature } = useTrainedModel();
+  const { toast } = useToast();
   
   const modelRef = useRef<WordWiseModel | null>(null);
   const optimizerRef = useRef<SGD | null>(null);
@@ -53,36 +54,37 @@ export default function WordwisePage() {
     try {
       setStatus('Инициализация WordWise.js...');
       const words = textCorpus.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
-      const { vocab, wordToIndex, indexToWord, vocabSize } = buildVocabulary(words.join(' '));
-      vocabDataRef.current = { vocab, wordToIndex, indexToWord, vocabSize };
+      const vocabData = buildVocabulary(words.join(' '));
+      vocabDataRef.current = vocabData;
 
-      modelRef.current = new WordWiseModel(vocabSize, embeddingDim, hiddenSize);
+      modelRef.current = new WordWiseModel(vocabData.vocabSize, embeddingDim, hiddenSize);
       optimizerRef.current = new SGD(learningRate);
       
-      setVocabData({ vocab, wordToIndex, indexToWord, vocabSize });
+      setVocabData(vocabData);
       
-      const wordsForSampling = vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
+      const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
       const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
       setSampleWords(shuffled.slice(0, 4));
 
       setLossHistory([]);
       setOutput('WordWise.js инициализирован. Словарь создан. Готов к обучению.');
-      console.log('Словарь:', vocab);
+      console.log('Словарь:', vocabData.vocab);
       setStatus('Готов к обучению.');
       setIsInitialized(true);
       setLatestPredictions([]);
+      setTrainedModel(null); // Сбрасываем обученную модель в глобальном состоянии
     } catch (error) {
       console.error("Ошибка инициализации:", error);
       setStatus(`Ошибка инициализации: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [textCorpus, learningRate, setVocabData]);
+  }, [textCorpus, learningRate, setVocabData, setTrainedModel]);
   
   const stopTraining = () => {
     trainingStopFlag.current = true;
   };
 
   const trainWordWise = useCallback(async () => {
-    if (!modelRef.current || !vocabDataRef.current) {
+    if (!modelRef.current || !vocabDataRef.current || !optimizerRef.current) {
         setStatus('Сначала инициализируйте модель.');
         return;
     }
@@ -91,8 +93,8 @@ export default function WordwisePage() {
     setIsTraining(true);
     trainingStopFlag.current = false;
     const model = modelRef.current;
-    const optimizer = new SGD(learningRate);
-    optimizerRef.current = optimizer;
+    const optimizer = optimizerRef.current;
+    optimizer.learningRate = learningRate; // Обновляем learning rate на случай, если он изменился
 
     const { wordToIndex, vocabSize } = vocabDataRef.current;
 
@@ -107,16 +109,16 @@ export default function WordwisePage() {
     const targetTensors = wordsToTargetTensors(words.slice(1), wordToIndex, vocabSize);
     const batches = createBatches(inputTensors, targetTensors, batchSize);
     
-    const newLossHistory: {epoch: number, loss: number}[] = [];
-    setLossHistory([]);
+    // Продолжаем историю потерь, а не сбрасываем
+    const newLossHistory = [...lossHistory]; 
+    const startEpoch = newLossHistory.length > 0 ? newLossHistory[newLossHistory.length - 1].epoch : 0;
+    
     setStatus('Начинается обучение...');
-    setOutput('');
-    setLatestPredictions([]);
     setTrainingProgress(0);
 
     for (let epoch = 0; epoch < numEpochs; epoch++) {
       if (trainingStopFlag.current) {
-        setStatus(`Обучение остановлено на эпохе ${epoch + 1}.`);
+        setStatus(`Обучение остановлено на эпохе ${startEpoch + epoch + 1}.`);
         break;
       }
       let epochLoss = 0;
@@ -135,11 +137,11 @@ export default function WordwisePage() {
       }
 
       const avgEpochLoss = epochLoss / batches.length;
-      newLossHistory.push({epoch: epoch + 1, loss: avgEpochLoss});
+      newLossHistory.push({epoch: startEpoch + epoch + 1, loss: avgEpochLoss});
       
       if (epoch % 10 === 0 || epoch === numEpochs - 1) {
         setLossHistory([...newLossHistory]);
-        setStatus(`Обучение: Эпоха ${epoch + 1}/${numEpochs}, Потеря: ${avgEpochLoss.toFixed(6)}`);
+        setStatus(`Обучение: Эпоха ${startEpoch + epoch + 1}, Потеря: ${avgEpochLoss.toFixed(6)}`);
         setTrainingProgress(((epoch + 1) / numEpochs) * 100);
         await new Promise(resolve => setTimeout(resolve, 0)); 
       }
@@ -152,16 +154,16 @@ export default function WordwisePage() {
     }
     setIsTraining(false);
     trainingStopFlag.current = false;
-  }, [numEpochs, learningRate, textCorpus, isTraining, setTrainedModel]);
+  }, [numEpochs, learningRate, textCorpus, isTraining, setTrainedModel, lossHistory]);
 
   const generateText = (startWord: string, numWords: number) => {
-    if (!modelRef.current || !vocabDataRef.current) {
+    const model = modelRef.current; // Используем локальную модель для тестов
+    if (!model || !vocabDataRef.current) {
       setOutput('Модель не обучена. Сначала инициализируйте и обучите её.');
       setStatus('Генерация невозможна: модель не обучена.');
       return;
     }
 
-    const model = modelRef.current;
     const { wordToIndex, indexToWord } = vocabDataRef.current;
     let currentWord = startWord.toLowerCase();
     
@@ -200,6 +202,69 @@ export default function WordwisePage() {
     setStatus('Генерация текста завершена.');
   };
 
+  const handleSaveModel = () => {
+    if (!modelRef.current || !vocabDataRef.current) {
+      toast({ title: "Ошибка", description: "Нет модели для сохранения. Сначала инициализируйте и обучите её.", variant: "destructive" });
+      return;
+    }
+    try {
+      const modelJson = serializeModel(modelRef.current, vocabDataRef.current);
+      const blob = new Blob([modelJson], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `wordwise-model-${new Date().toISOString()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: "Успех", description: "Модель успешно сохранена." });
+    } catch (error) {
+      console.error("Ошибка сохранения модели:", error);
+      toast({ title: "Ошибка сохранения", description: `${error instanceof Error ? error.message : 'Неизвестная ошибка'}`, variant: "destructive" });
+    }
+  };
+
+  const handleLoadModel = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const jsonContent = e.target?.result as string;
+        const { model, vocabData } = deserializeModel(jsonContent);
+
+        modelRef.current = model;
+        vocabDataRef.current = vocabData;
+        optimizerRef.current = new SGD(learningRate); // Создаем новый оптимизатор для загруженной модели
+
+        // Обновляем глобальное состояние
+        setTrainedModel(model);
+        setVocabData(vocabData);
+        
+        setIsInitialized(true);
+        setStatus('Модель успешно загружена. Готова к дообучению или использованию.');
+        setOutput('Модель загружена. Вы можете продолжить обучение или перейти в чат.');
+        setLossHistory([]); // Сбрасываем историю потерь для новой сессии
+
+        const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
+        const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
+        setSampleWords(shuffled.slice(0, 4));
+
+        toast({ title: "Успех", description: "Модель успешно загружена." });
+
+      } catch (error) {
+        console.error("Ошибка загрузки модели:", error);
+        toast({ title: "Ошибка загрузки", description: `${error instanceof Error ? error.message : 'Неверный формат файла'}`, variant: "destructive" });
+        setStatus('Ошибка загрузки модели.');
+      }
+    };
+    reader.readAsText(file);
+    // Сбрасываем значение input, чтобы можно было загрузить тот же файл снова
+    event.target.value = '';
+  };
+
   return (
     <div className="container mx-auto p-4 md:p-8 bg-slate-50 min-h-screen">
        <div className="mb-8">
@@ -210,7 +275,7 @@ export default function WordwisePage() {
       
       <header className="text-center mb-8">
         <h1 className="text-4xl font-bold text-gray-800">Тренажерный Зал WordWise.js</h1>
-        <p className="text-lg text-muted-foreground mt-2">Здесь вы можете обучить свою собственную языковую модель</p>
+        <p className="text-lg text-muted-foreground mt-2">Здесь вы можете обучить, сохранить и загрузить свою собственную языковую модель</p>
       </header>
       
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -233,7 +298,7 @@ export default function WordwisePage() {
                <Alert variant="default" className="mt-4">
                   <Info className="h-4 w-4" />
                   <AlertDescription>
-                    Чем больше качественных примеров "вопрос-ответ", тем умнее будет модель.
+                    Чем больше качественных примеров, тем умнее будет модель. Вы можете дообучать модель на новых данных.
                   </AlertDescription>
               </Alert>
             </CardContent>
@@ -242,7 +307,7 @@ export default function WordwisePage() {
           <Card>
             <CardHeader>
               <CardTitle>Шаг 2: Настройте и обучите</CardTitle>
-              <CardDescription>Задайте параметры обучения. Больше эпох — дольше, но качественнее обучение.</CardDescription>
+              <CardDescription>Задайте параметры, инициализируйте модель и начните обучение. Вы можете дообучать уже существующую модель.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
                <div className="grid grid-cols-2 gap-4">
@@ -272,12 +337,12 @@ export default function WordwisePage() {
                 </div>
 
 
-              <Button onClick={initializeWordWise} disabled={isInitialized || isTraining} className="w-full">
-                Инициализировать / Сбросить
+              <Button onClick={initializeWordWise} disabled={isTraining} className="w-full">
+                Инициализировать / Сбросить модель
               </Button>
               {!isTraining ? (
                  <Button onClick={trainWordWise} disabled={!isInitialized || isTraining} className="w-full">
-                    Начать обучение
+                    Начать/Продолжить обучение
                  </Button>
               ) : (
                 <Button onClick={stopTraining} variant="destructive" className="w-full">
@@ -288,6 +353,23 @@ export default function WordwisePage() {
               <p className="text-sm text-center text-muted-foreground pt-2">Статус: {status}</p>
             </CardContent>
           </Card>
+           <Card>
+            <CardHeader>
+              <CardTitle>Управление моделью</CardTitle>
+              <CardDescription>Сохраните прогресс обучения или загрузите ранее сохраненную модель.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-4">
+               <Button onClick={handleSaveModel} disabled={isTraining || !isInitialized} variant="outline">
+                 <Download className="mr-2 h-4 w-4" /> Сохранить
+               </Button>
+               <Button asChild variant="outline" disabled={isTraining}>
+                 <Label htmlFor="load-model-input" className="cursor-pointer">
+                    <Upload className="mr-2 h-4 w-4" /> Загрузить
+                    <Input id="load-model-input" type="file" accept=".json" className="sr-only" onChange={handleLoadModel} />
+                 </Label>
+               </Button>
+            </CardContent>
+           </Card>
 
            <Card>
             <CardHeader>
@@ -308,7 +390,7 @@ export default function WordwisePage() {
                         </Button>
                       ))
                     ) : (
-                      <p className="text-sm text-muted-foreground col-span-2 text-center">Инициализируйте модель, чтобы увидеть примеры.</p>
+                      <p className="text-sm text-muted-foreground col-span-2 text-center">Инициализируйте или загрузите модель.</p>
                     )}
                  </div>
                  <div className="mt-4 p-4 bg-slate-100 rounded-md min-h-[100px] text-gray-700 font-mono text-sm whitespace-pre-wrap">
@@ -333,8 +415,8 @@ export default function WordwisePage() {
                         {lossHistory.length > 0 ? (
                             <LineChart data={lossHistory} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="epoch" label={{ value: 'Эпоха', position: 'insideBottom', offset: -5 }}/>
-                                <YAxis allowDecimals={false} domain={['dataMin', 'dataMax']} label={{ value: 'Потеря', angle: -90, position: 'insideLeft' }}/>
+                                <XAxis dataKey="epoch" type="number" domain={['dataMin', 'dataMax']} label={{ value: 'Эпоха', position: 'insideBottom', offset: -5 }}/>
+                                <YAxis allowDecimals={false} domain={['dataMin', 'auto']} label={{ value: 'Потеря', angle: -90, position: 'insideLeft' }}/>
                                 <Tooltip
                                     contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.8)', borderRadius: '0.5rem' }}
                                     formatter={(value: number) => [value.toFixed(6), "Потеря"]}

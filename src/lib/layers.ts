@@ -38,6 +38,7 @@ export class Embedding extends Layer {
     // Инициализация весов: случайные значения из нормального распределения
     const limit = Math.sqrt(1 / embeddingDim); // Эвристика для эмбеддингов
     this.weights = Tensor.randn([vocabSize, embeddingDim], limit);
+    this.weights.name = 'weights'; // Даем имя для сериализации
     this.parameters = [this.weights];
   }
 
@@ -90,6 +91,8 @@ export class Embedding extends Layer {
         const dWeights = Tensor.zeros(parentTensor.shape); // Создаем тензор для агрегации градиентов
         for (let i = 0; i < batchSize; i++) {
           const wordIndex = Math.floor(input.data[i]); // Оригинальный индекс слова
+          if (wordIndex < 0 || wordIndex >= vocabSize) continue; // Не обновляем градиенты для неверных индексов
+
           const gradRowStart = i * embeddingDim;
           const dWeightsRowStart = wordIndex * embeddingDim;
           for (let j = 0; j < embeddingDim; j++) {
@@ -127,6 +130,8 @@ export class Linear extends Layer {
     this.weights = Tensor.randn([inputSize, outputSize], limit);
     this.bias = Tensor.zeros([1, outputSize]); // Смещения обычно инициализируются нулями
 
+    this.weights.name = 'weights';
+    this.bias.name = 'bias';
     this.parameters = [this.weights, this.bias];
   }
 
@@ -206,21 +211,21 @@ export class LSTMCell extends Layer {
         const limit_x = Math.sqrt(6 / (inputSize + hiddenSize));
         const limit_h = Math.sqrt(6 / (hiddenSize + hiddenSize));
 
-        this.Wi = Tensor.randn([inputSize, hiddenSize], limit_x);
-        this.Ui = Tensor.randn([hiddenSize, hiddenSize], limit_h);
-        this.Bi = Tensor.zeros([1, hiddenSize]);
+        this.Wi = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wi.name = 'Wi';
+        this.Ui = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Ui.name = 'Ui';
+        this.Bi = Tensor.zeros([1, hiddenSize]); this.Bi.name = 'Bi';
 
-        this.Wf = Tensor.randn([inputSize, hiddenSize], limit_x);
-        this.Uf = Tensor.randn([hiddenSize, hiddenSize], limit_h);
-        this.Bf = Tensor.zeros([1, hiddenSize]);
+        this.Wf = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wf.name = 'Wf';
+        this.Uf = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Uf.name = 'Uf';
+        this.Bf = Tensor.zeros([1, hiddenSize]); this.Bf.name = 'Bf';
 
-        this.Wo = Tensor.randn([inputSize, hiddenSize], limit_x);
-        this.Uo = Tensor.randn([hiddenSize, hiddenSize], limit_h);
-        this.Bo = Tensor.zeros([1, hiddenSize]);
+        this.Wo = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wo.name = 'Wo';
+        this.Uo = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Uo.name = 'Uo';
+        this.Bo = Tensor.zeros([1, hiddenSize]); this.Bo.name = 'Bo';
 
-        this.Wc = Tensor.randn([inputSize, hiddenSize], limit_x);
-        this.Uc = Tensor.randn([hiddenSize, hiddenSize], limit_h);
-        this.Bc = Tensor.zeros([1, hiddenSize]);
+        this.Wc = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wc.name = 'Wc';
+        this.Uc = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Uc.name = 'Uc';
+        this.Bc = Tensor.zeros([1, hiddenSize]); this.Bc.name = 'Bc';
 
         this.parameters = [
             this.Wi, this.Ui, this.Bi,

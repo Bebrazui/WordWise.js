@@ -1,6 +1,13 @@
 // src/lib/model.ts
-import { Embedding, Linear, LSTMCell, softmax } from './layers';
+import { Embedding, Linear, LSTMCell, Layer } from './layers';
 import { Tensor } from './tensor';
+
+type VocabDataType = {
+  vocab: string[];
+  wordToIndex: Map<string, number>;
+  indexToWord: Map<number, string>;
+  vocabSize: number;
+};
 
 /**
  * WordWiseModel: Простая рекуррентная нейронная сеть для обработки текста,
@@ -8,10 +15,12 @@ import { Tensor } from './tensor';
  * Предназначена для задач предсказания следующего слова.
  */
 export class WordWiseModel {
-  private embeddingLayer: Embedding; // Слой для преобразования индексов слов в векторы
-  private lstmCell: LSTMCell;         // Ячейка LSTM для обработки последовательностей
-  private outputLayer: Linear;        // Выходной слой для предсказания следующего слова
+  embeddingLayer: Embedding; // Слой для преобразования индексов слов в векторы
+  lstmCell: LSTMCell;         // Ячейка LSTM для обработки последовательностей
+  outputLayer: Linear;        // Выходной слой для предсказания следующего слова
   public hiddenSize: number;          // Размер скрытого состояния LSTM
+  public vocabSize: number;
+  public embeddingDim: number;
 
   /**
    * @param vocabSize Размер словаря (количество уникальных слов).
@@ -22,7 +31,9 @@ export class WordWiseModel {
     this.embeddingLayer = new Embedding(vocabSize, embeddingDim);
     this.lstmCell = new LSTMCell(embeddingDim, hiddenSize);
     this.outputLayer = new Linear(hiddenSize, vocabSize);
-    this.hiddenSize = hiddenSize; // Сохраняем размер скрытого состояния для инициализации
+    this.hiddenSize = hiddenSize;
+    this.vocabSize = vocabSize;
+    this.embeddingDim = embeddingDim;
   }
 
   /**
@@ -59,6 +70,14 @@ export class WordWiseModel {
       ...this.outputLayer.getParameters(),
     ];
   }
+  
+  getLayers(): { [key: string]: Layer } {
+    return {
+      embeddingLayer: this.embeddingLayer,
+      lstmCell: this.lstmCell,
+      outputLayer: this.outputLayer,
+    }
+  }
 
   /**
    * Инициализирует начальные скрытое состояние (h0) и состояние ячейки (c0)
@@ -72,4 +91,83 @@ export class WordWiseModel {
     const c0 = Tensor.zeros([batchSize, this.hiddenSize]);
     return { h0, c0 };
   }
+}
+
+// Функции для сохранения и загрузки модели
+
+/**
+ * Сериализует модель и данные словаря в JSON-строку.
+ * @param model Экземпляр WordWiseModel.
+ * @param vocabData Данные словаря.
+ * @returns JSON-строка.
+ */
+export function serializeModel(model: WordWiseModel, vocabData: VocabDataType): string {
+    const layersData: { [key: string]: { [key: string]: { data: number[], shape: number[] } } } = {};
+
+    Object.entries(model.getLayers()).forEach(([layerName, layer]) => {
+        layersData[layerName] = {};
+        layer.getParameters().forEach(param => {
+            layersData[layerName][param.name] = {
+                data: Array.from(param.data),
+                shape: param.shape
+            };
+        });
+    });
+
+    const dataToSave = {
+        architecture: {
+            vocabSize: model.vocabSize,
+            embeddingDim: model.embeddingDim,
+            hiddenSize: model.hiddenSize
+        },
+        weights: layersData,
+        vocab: vocabData.vocab
+    };
+
+    return JSON.stringify(dataToSave, null, 2);
+}
+
+/**
+ * Десериализует модель из JSON-строки.
+ * @param jsonString JSON-строка с данными модели.
+ * @returns Объект с экземпляром WordWiseModel и данными словаря.
+ */
+export function deserializeModel(jsonString: string): { model: WordWiseModel, vocabData: VocabDataType } {
+    const savedData = JSON.parse(jsonString);
+
+    if (!savedData.architecture || !savedData.weights || !savedData.vocab) {
+        throw new Error("Invalid model file format.");
+    }
+    
+    // Восстанавливаем словарь
+    const vocab = savedData.vocab;
+    const wordToIndex = new Map(vocab.map((word: string, i: number) => [word, i]));
+    const indexToWord = new Map(vocab.map((word: string, i: number) => [i, word]));
+    const vocabSize = vocab.length;
+    const vocabData = { vocab, wordToIndex, indexToWord, vocabSize };
+    
+    // Проверяем соответствие архитектуры
+    if (vocabSize !== savedData.architecture.vocabSize) {
+        throw new Error("Vocabulary size mismatch between loaded model and its architecture description.");
+    }
+    
+    // Создаем новую модель с той же архитектурой
+    const { embeddingDim, hiddenSize } = savedData.architecture;
+    const model = new WordWiseModel(vocabSize, embeddingDim, hiddenSize);
+
+    // Загружаем веса
+    Object.entries(model.getLayers()).forEach(([layerName, layer]) => {
+        const savedLayerWeights = savedData.weights[layerName];
+        if (!savedLayerWeights) throw new Error(`Weights for layer ${layerName} not found in file.`);
+        
+        layer.getParameters().forEach(param => {
+            const savedParam = savedLayerWeights[param.name];
+            if (!savedParam) throw new Error(`Parameter ${param.name} for layer ${layerName} not found.`);
+            if (param.size !== savedParam.data.length) throw new Error(`Weight size mismatch for ${param.name}.`);
+
+            param.data.set(savedParam.data); // Загружаем веса в существующий тензор
+        });
+    });
+
+    return { model, vocabData };
 }
