@@ -237,7 +237,8 @@ function levenshteinDistance(a: string, b: string): number {
 }
 
 const personalPronounMarkers = ["я", "у меня", "мой", "мне", "я сам"];
-const questionAboutWellbeing = ["как дела", "как ты", "как поживаешь", "как твое", "как сам"];
+const questionAboutWellbeing = ["как дела", "как ты", "как поживаешь", "как твое", "как сам", "как настроение"];
+const positiveUserStates = ["хорошо", "нормально", "отлично", "замечательно", "прекрасно", "в порядке", "ничего", "пойдет"];
 
 /**
  * Checks if the user is likely responding to a question about their well-being.
@@ -249,10 +250,15 @@ function isPersonalResponseToWellbeing(userInput: string, history: string[]): bo
     const lowerInput = userInput.toLowerCase();
     const lastBotMessage = history.length > 0 ? history[history.length - 1].toLowerCase() : "";
 
-    const isPersonal = personalPronounMarkers.some(marker => lowerInput.startsWith(marker));
     const wasAsked = questionAboutWellbeing.some(q => lastBotMessage.includes(q));
+    if (!wasAsked) {
+        return false;
+    }
 
-    return isPersonal && wasAsked;
+    const isPersonal = personalPronounMarkers.some(marker => lowerInput.startsWith(marker));
+    const isPositiveState = positiveUserStates.includes(lowerInput.replace(/[.,!?]/g, '').trim());
+
+    return isPersonal || isPositiveState;
 }
 
 
