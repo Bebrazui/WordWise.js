@@ -86,7 +86,7 @@ function synonymize(sentence: string): string {
  */
 function generateConnectionResponse(userInput: string): string | null {
   const lowerCaseInput = userInput.toLowerCase();
-  const words = lowerCaseInput.split(/\s+/).filter(w => w.length > 2); // Get individual words
+  const words = lowerCaseInput.split(/\s+/).filter(w => w.length > 0); // Allow short words
   const connections = (wordConnections as WordConnections).словарь_связей;
 
   for (const word of words) {
