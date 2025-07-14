@@ -27,7 +27,7 @@ export default function WordwisePage() {
   const [isTraining, setIsTraining] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
-  const [textCorpus, setTextCorpus] = useState("the cat sat on the mat. the dog ran fast. cat and dog are pets and friends. a cat and a dog play together. and the cat loves the dog.");
+  const [textCorpus, setTextCorpus] = useState("вопрос: привет ответ: привет как дела вопрос: как дела ответ: все хорошо спасибо");
   const [sampleWords, setSampleWords] = useState<string[]>([]);
   
   const { setTrainedModel, setVocabData } = useTrainedModel();
@@ -191,7 +191,7 @@ export default function WordwisePage() {
           <Card>
             <CardHeader>
               <CardTitle>Шаг 1: Подготовьте данные</CardTitle>
-              <CardDescription>Введите текст, на котором будет учиться модель. Чем больше текста, тем лучше результат. Поддерживаются русский и английский языки.</CardDescription>
+              <CardDescription>Введите текст для обучения. Чтобы научить модель диалогу, используйте формат "вопрос: ... ответ: ...".</CardDescription>
             </CardHeader>
             <CardContent>
               <Label htmlFor="corpus">Ваш обучающий корпус:</Label>
@@ -199,7 +199,7 @@ export default function WordwisePage() {
                 id="corpus"
                 value={textCorpus}
                 onChange={(e) => setTextCorpus(e.target.value)}
-                placeholder="The quick brown fox jumps over the lazy dog..."
+                placeholder="вопрос: привет ответ: привет как дела вопрос: как дела ответ: все хорошо спасибо"
                 className="min-h-[150px] mt-2"
                 disabled={isTraining || isInitialized}
               />
@@ -226,7 +226,7 @@ export default function WordwisePage() {
            <Card>
             <CardHeader>
               <CardTitle>Шаг 3: Проверьте генерацию</CardTitle>
-               <CardDescription>Здесь можно быстро проверить, как модель генерирует текст.</CardDescription>
+               <CardDescription>Здесь можно быстро проверить, как модель генерирует текст. Кнопки обновятся после инициализации.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
                  <div className="grid grid-cols-2 gap-2">
