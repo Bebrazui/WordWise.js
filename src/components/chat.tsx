@@ -24,6 +24,10 @@ import {
 } from "@/components/ui/sheet";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
 
 type Message = {
   id: number;
@@ -38,7 +42,7 @@ const formSchema = z.object({
 
 const initialMessage: Message = {
   id: 1,
-  text: "Привет! Я WordWise, ваш личный помощник. Давайте пообщаемся.",
+  text: "Привет! Я WordWise, ваш личный помощник. Спроси меня о чем-нибудь или попроси написать код.",
   sender: "ai",
 };
 
@@ -91,9 +95,6 @@ export function Chat() {
         .slice(-4, -1)
         .map((m) => m.text);
 
-      await new Promise(
-        (resolve) => setTimeout(resolve, 500 + Math.random() * 500)
-      );
 
       const response = await contextualResponse({
         userInput: userInput,
@@ -120,6 +121,33 @@ export function Chat() {
       setIsLoading(false);
     }
   }
+  
+  const CodeBlock = ({
+    node,
+    inline,
+    className,
+    children,
+    ...props
+  }: any) => {
+    const match = /language-(\w+)/.exec(className || '');
+    // vscDarkPlus is a good dark theme for code.
+    // We can also use vs (light), coy, okaidia, etc.
+    return !inline && match ? (
+      <SyntaxHighlighter
+        style={vscDarkPlus}
+        language={match[1]}
+        PreTag="div"
+        {...props}
+      >
+        {String(children).replace(/\n$/, '')}
+      </SyntaxHighlighter>
+    ) : (
+      <code className={className} {...props}>
+        {children}
+      </code>
+    );
+  };
+
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
@@ -155,7 +183,7 @@ export function Chat() {
                   <Label htmlFor="experimental-mode" className="flex flex-col space-y-1">
                     <span>Экспериментальный режим</span>
                     <span className="font-normal leading-snug text-muted-foreground">
-                      Использовать легковесную TF.js модель для более быстрых, но менее подробных ответов.
+                      Использовать легковесный TF.js модель для более быстрых, но менее подробных ответов.
                     </span>
                   </Label>
                   <Switch
@@ -189,7 +217,7 @@ export function Chat() {
                 )}
                 <div
                   className={cn(
-                    "flex flex-col gap-1 w-full max-w-md",
+                    "flex flex-col gap-1 w-full max-w-md lg:max-w-2xl",
                     message.sender === "user" ? "items-end" : "items-start"
                   )}
                 >
@@ -208,7 +236,14 @@ export function Chat() {
                           : "bg-card text-card-foreground rounded-bl-none"
                       )}
                     >
-                      <p className="text-sm leading-relaxed">{message.text}</p>
+                      <ReactMarkdown
+                        components={{
+                            code: CodeBlock,
+                        }}
+                        className="prose prose-sm dark:prose-invert max-w-none"
+                      >
+                        {message.text}
+                      </ReactMarkdown>
                     </div>
                   )}
                 </div>
@@ -238,7 +273,7 @@ export function Chat() {
                 <FormItem className="flex-1">
                   <FormControl>
                     <Input
-                      placeholder="Type a message..."
+                      placeholder="Type a message or ask to write code..."
                       autoComplete="off"
                       disabled={isLoading}
                       {...field}
