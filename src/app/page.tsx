@@ -1,7 +1,6 @@
-// src/app/page.tsx
+
 "use client";
 import { useState, useRef, useEffect, FormEvent } from 'react';
-import { generateChatResponse, ChatMessage } from '@/ai/flows/contextual-response';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +12,12 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import Link from 'next/link';
 
+// Определяем тип сообщения прямо здесь
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -21,10 +26,9 @@ export default function Home() {
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-  const modelName = isExperimentalMode ? "Bot Q 0.3 (Generative)" : "Bot Q 0.2 (Quantum)";
+  const modelName = "WordWise.js Engine";
 
   useEffect(() => {
-    // Scroll to the bottom when messages change
     if (scrollAreaRef.current) {
         const viewport = scrollAreaRef.current.querySelector('div');
         if (viewport) {
@@ -43,15 +47,15 @@ export default function Home() {
     setInput('');
     setIsLoading(true);
 
-    try {
-      const botResponse = await generateChatResponse(input, [...messages, userMessage], isExperimentalMode);
-      setMessages(prev => [...prev, { role: 'assistant', content: botResponse }]);
-    } catch (error) {
-      console.error("Error generating response:", error);
-      setMessages(prev => [...prev, { role: 'assistant', content: "Извините, у меня возникла проблема. Попробуйте еще раз." }]);
-    } finally {
-      setIsLoading(false);
-    }
+    // Имитация ответа от локальной модели
+    setTimeout(() => {
+        const botResponse: ChatMessage = {
+            role: 'assistant',
+            content: `Я локальная модель и получил ваше сообщение: "${userMessage.content}". Моя логика ответа пока не подключена к этому интерфейсу.`
+        };
+        setMessages(prev => [...prev, botResponse]);
+        setIsLoading(false);
+    }, 1000);
   };
 
   return (
@@ -86,12 +90,13 @@ export default function Home() {
                     <div className="space-y-0.5">
                       <Label>Генеративный режим</Label>
                       <p className="text-[0.8rem] text-muted-foreground">
-                        Включает ИИ-генерацию ответов вместо шаблонных.
+                        Включает ИИ-генерацию ответов вместо шаблонных. (Пока не активно)
                       </p>
                     </div>
                     <Switch
                       checked={isExperimentalMode}
                       onCheckedChange={setIsExperimentalMode}
+                      disabled={true}
                     />
                   </div>
                 </div>
