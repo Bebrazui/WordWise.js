@@ -317,9 +317,10 @@ function isPersonalResponseToWellbeing(
   userInput: string,
   history: string[]
 ): boolean {
-  const lowerInput = userInput.toLowerCase();
-  const lastBotMessage =
-    history.length > 0 ? history[history.length - 1].toLowerCase() : '';
+  if (history.length === 0) return false;
+
+  const lowerInput = userInput.toLowerCase().replace(/[.,!?]/g, '').trim();
+  const lastBotMessage = history[history.length - 1].toLowerCase();
 
   const wasAsked = questionAboutWellbeing.some(q => lastBotMessage.includes(q));
   if (!wasAsked) {
@@ -329,11 +330,10 @@ function isPersonalResponseToWellbeing(
   const isPersonal = personalPronounMarkers.some(marker =>
     lowerInput.startsWith(marker)
   );
-  const isPositiveState = positiveUserStates.includes(
-    lowerInput.replace(/[.,!?]/g, '').trim()
-  );
+  
+  const isDirectAnswer = positiveUserStates.some(state => lowerInput.includes(state));
 
-  return isPersonal || isPositiveState;
+  return isPersonal || isDirectAnswer;
 }
 
 /**
@@ -501,6 +501,31 @@ function generateConnectionResponse(userInput: string): string | null {
 }
 
 /**
+ * Handles simple, direct responses to bot's questions, like "нет" to "Я правильно тебя понял?".
+ * @param userInput The user's message.
+ * @param history The conversation history.
+ * @returns A specific response or null if no direct response context is found.
+ */
+function handleDirectResponse(userInput: string, history: string[]): string | null {
+    if (history.length === 0) return null;
+    
+    const lowerInput = userInput.toLowerCase().trim();
+    const lastBotMessage = history[history.length - 1].toLowerCase();
+
+    if (lastBotMessage.includes("я правильно тебя понял?")) {
+        if (lowerInput === "нет" || lowerInput === "неправильно") {
+            return "Понял, моя ошибка. Попробуй, пожалуйста, перефразировать свой вопрос, чтобы я лучше понял.";
+        }
+        if (lowerInput === "да" || lowerInput === "правильно") {
+            return "Отлично! Рад, что мы на одной волне.";
+        }
+    }
+
+    return null;
+}
+
+
+/**
  * Model Q (Creative): Generates a response by finding the best matching intent or using word connections.
  * It uses a scoring mechanism to find the "ideal" response and handles typos.
  * It can also learn new words during the conversation.
@@ -516,6 +541,12 @@ async function generateCreativeResponse(
   const wordsInInput = lowerCaseInput.split(/\s+/).filter(w => w);
 
   // --- Start of Sub-algorithms Pipeline ---
+  
+  // 0. Direct Response check: Handle simple "yes/no" to bot's questions first.
+  const directResponse = handleDirectResponse(userInput, history);
+  if (directResponse) {
+      return directResponse;
+  }
 
   // 1. Learning Sub-algorithm: Check if user is defining a word
   const definition = isDefiningUnknownWord(userInput);
@@ -557,8 +588,8 @@ async function generateCreativeResponse(
     const response = responses[Math.floor(Math.random() * responses.length)];
     lastResponseMap.set(bestMatch.intent, response);
     
-    // Clarify if the match was fuzzy
-    if (bestMatch.score < 0.95 && !userInput.includes(response.split(' ')[0])) {
+    // Clarify if the match was fuzzy and not a direct response to a question
+    if (bestMatch.score < 0.95 && !isPersonalResponseToWellbeing(userInput, history)) {
       return synonymize(response) + ' Я правильно тебя понял?';
     }
     return synonymize(response);
