@@ -371,6 +371,8 @@ function findBestIntentMatch(normalizedInput: string): { intent: string; score: 
  */
 function generateConnectionResponse(normalizedInput: string): string | null {
     const words = [...new Set(normalizedInput.split(/\s+/).filter(w => w.length > 2))];
+    if (words.length === 0) return null;
+
     const foundFacts: { fact: string; weight: number }[] = [];
 
     const allWordsAndSynonyms = new Set<string>();
@@ -545,15 +547,6 @@ async function generateCreativeResponse(
   if (sessionMemory.lastUnknownWord && !userInput.toLowerCase().startsWith(sessionMemory.lastUnknownWord)) {
       sessionMemory.lastUnknownWord = null;
   }
-
-  // In experimental mode, we skip straight to the creative part
-  if (experimental) {
-      const connectionResponse = generateConnectionResponse(normalizedInput);
-      if (connectionResponse) {
-          return connectionResponse; // No synonymization to see the raw output
-      }
-      return getFallbackResponse(normalizedInput);
-  }
   
   // Stage 3: Direct Response Handler
   const directResponse = handleDirectResponse(normalizedInput, history);
@@ -566,6 +559,24 @@ async function generateCreativeResponse(
   if (wellbeingResponse) {
       return synonymize(wellbeingResponse);
   }
+  
+  // Experimental mode has a specific flow
+  if (experimental) {
+      const connectionResponse = generateConnectionResponse(normalizedInput);
+      if (connectionResponse) {
+          return connectionResponse; // No synonymization to see the raw output
+      }
+      // Fallback for experimental: try a normal KB match, but without synonymization
+      const bestMatch = findBestIntentMatch(normalizedInput);
+      if (bestMatch && bestMatch.score > 0.6) {
+          let responses = kb[bestMatch.intent].responses;
+          const response = responses[Math.floor(Math.random() * responses.length)];
+          return response; // No synonymization
+      }
+      return getFallbackResponse(normalizedInput); // Final fallback if nothing works
+  }
+
+  // --- Normal flow continues here ---
   
   // Stage 5: Knowledge Base Matcher (The Strategist)
   const bestMatch = findBestIntentMatch(normalizedInput);
