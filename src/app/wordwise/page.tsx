@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Info, Upload, Download, Settings, TestTube2, CheckCircle, ImagePlus, FileText } from 'lucide-react';
 
-import { serializeModel, deserializeModel, WordWiseModel } from '../../lib/model';
+import { serializeModel, deserializeModel, WordWiseModel, ImageWiseModel, BaseModel, VocabData } from '../../lib/model';
 import { getWordFromPrediction } from '../../utils/tokenizer';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -68,12 +68,16 @@ export default function WordwisePage() {
   const [hiddenSize, setHiddenSize] = useState(128);
   const [batchSize, setBatchSize] = useState(4);
 
+  // Image-specific params
+  const [imageSize, setImageSize] = useState(32);
+
+
   const { setTrainedModel, setVocabData, temperature, setTemperature } = useTrainedModel();
   const { toast } = useToast();
   
   const workerRef = useRef<Worker | null>(null);
-  const modelRef = useRef<WordWiseModel | null>(null);
-  const vocabDataRef = useRef<{ vocab: string[]; wordToIndex: Map<string, number>; indexToWord: Map<number, string>; vocabSize: number } | null>(null);
+  const modelRef = useRef<BaseModel | null>(null);
+  const vocabDataRef = useRef<VocabData | null>(null);
 
   // Setup Web Worker
   useEffect(() => {
@@ -93,8 +97,13 @@ export default function WordwisePage() {
           setLossHistory([]);
           setLatestPredictions([]);
           setTrainedModel(null);
-          setSampleWords(payload.sampleWords);
-          setOutput(`WordWise.js инициализирован. Размер словаря: ${payload.vocabSize}.`);
+          if (payload.sampleWords) {
+            setSampleWords(payload.sampleWords);
+          }
+          let initMsg = `Модель (${payload.type}) инициализирована.`;
+          if (payload.vocabSize) initMsg += ` Размер словаря: ${payload.vocabSize}.`;
+          if (payload.numClasses) initMsg += ` Количество классов: ${payload.numClasses}.`;
+          setOutput(initMsg);
           break;
         case 'progress':
           setLossHistory(prev => [...prev, { epoch: payload.epoch, loss: payload.loss }]);
@@ -137,47 +146,70 @@ export default function WordwisePage() {
 
 
   const initializeWordWise = useCallback(() => {
-    if (trainingData.type !== 'text') {
-        toast({ title: "Ошибка", description: "Инициализация пока поддерживается только для текста.", variant: "destructive" });
-        return;
-    }
-    setStatus('Инициализация WordWise.js...');
-    workerRef.current?.postMessage({
-        type: 'initialize',
-        payload: {
+    setStatus('Инициализация...');
+    let payload: any;
+    if (trainingData.type === 'text') {
+        payload = {
+            type: 'text',
             textCorpus: trainingData.corpus,
             embeddingDim,
             hiddenSize,
             learningRate
+        };
+    } else if (trainingData.type === 'image') {
+        if(trainingData.items.length < 2) {
+            toast({ title: "Ошибка", description: "Для обучения нужно как минимум 2 изображения.", variant: "destructive" });
+            return;
         }
+        payload = {
+            type: 'image',
+            items: trainingData.items,
+            imageSize,
+            learningRate
+        };
+    }
+
+    workerRef.current?.postMessage({
+        type: 'initialize',
+        payload
     });
-  }, [trainingData, embeddingDim, hiddenSize, learningRate, toast]);
+  }, [trainingData, embeddingDim, hiddenSize, learningRate, imageSize, toast]);
   
   const stopTraining = () => {
     workerRef.current?.postMessage({ type: 'stop' });
   };
 
   const trainWordWise = async () => {
-    if (trainingData.type !== 'text') {
-        toast({ title: "Ошибка", description: "Обучение пока поддерживается только для текста.", variant: "destructive" });
-        return;
-    }
     if (!isInitialized || isTraining) return;
-
     setIsTraining(true);
     setIsTrained(false);
     setStatus('Начинается обучение...');
     setTrainingProgress(0);
 
+    let payload: any;
+     if (trainingData.type === 'text') {
+        payload = {
+            type: 'text',
+            numEpochs,
+            learningRate,
+            batchSize
+        };
+    } else if (trainingData.type === 'image') {
+        payload = {
+            type: 'image',
+            numEpochs,
+            learningRate,
+            batchSize
+        };
+    } else {
+        toast({ title: "Ошибка", description: "Неизвестный тип данных для обучения.", variant: "destructive" });
+        setIsTraining(false);
+        return;
+    }
+
     workerRef.current?.postMessage({
       type: 'train',
-      payload: {
-        textCorpus: trainingData.corpus,
-        numEpochs,
-        learningRate,
-        batchSize,
-        lossHistory
-      }
+      payload: { ...payload, lossHistory }
     });
   };
 
@@ -186,17 +218,23 @@ export default function WordwisePage() {
         toast({ title: "Ошибка", description: "Нет модели для применения. Обучите или загрузите модель.", variant: "destructive" });
         return;
     }
-    setTrainedModel(modelRef.current);
+    if (modelRef.current.type !== 'text') {
+        toast({ title: "Ошибка", description: "К чату можно применить только текстовую модель.", variant: "destructive" });
+        return;
+    }
+    setTrainedModel(modelRef.current as WordWiseModel);
     setVocabData(vocabDataRef.current);
     toast({ title: "Успех!", description: "Модель успешно применена к чату. Можете вернуться и пообщаться." });
   };
 
   const generateText = (startWord: string) => {
-    if (!modelRef.current || !vocabDataRef.current) {
-      toast({ title: "Ошибка", description: "Сначала обучите или загрузите модель.", variant: "destructive" });
+    if (!modelRef.current || !vocabDataRef.current || modelRef.current.type !== 'text' || !('wordToIndex' in vocabDataRef.current)) {
+      toast({ title: "Ошибка", description: "Сначала обучите или загрузите текстовую модель.", variant: "destructive" });
       return;
     }
-     const { wordToIndex, indexToWord } = vocabDataRef.current!;
+     const { wordToIndex, indexToWord } = vocabDataRef.current;
+     const textModel = modelRef.current as WordWiseModel;
+
      let currentWord = startWord.toLowerCase();
      
      if (!wordToIndex.has(currentWord)) {
@@ -207,8 +245,7 @@ export default function WordwisePage() {
      }
 
      let generatedSequence = [currentWord];
-     let h = modelRef.current.initializeStates(1).h0;
-     let c = modelRef.current.initializeStates(1).c0;
+     let {h0: h, c0: c} = textModel.initializeStates(1);
 
      setStatus(`Генерация текста, начало: "${currentWord}"...`);
      setLatestPredictions([]);
@@ -216,7 +253,7 @@ export default function WordwisePage() {
      const numWords = 10;
      for (let i = 0; i < numWords; i++) {
         const inputTensor = new Tensor([wordToIndex.get(currentWord) || 0], [1]);
-        const { outputLogits: predictionLogits, h: nextH, c: nextC } = modelRef.current.forwardStep(inputTensor, h, c);
+        const { outputLogits: predictionLogits, h: nextH, c: nextC } = textModel.forward(inputTensor, h, c);
         h = nextH;
         c = nextC;
 
@@ -248,7 +285,13 @@ export default function WordwisePage() {
                 label: file.name.split('.')[0] || 'unknown'
             });
             if (newImageItems.length === filesArray.length) {
-                setTrainingData({ type: 'image', items: newImageItems });
+                // Keep existing items and add new ones
+                 setTrainingData(prev => {
+                    if (prev.type === 'image') {
+                        return { type: 'image', items: [...prev.items, ...newImageItems] };
+                    }
+                    return { type: 'image', items: newImageItems };
+                });
             }
         };
         reader.readAsDataURL(file);
@@ -268,7 +311,7 @@ export default function WordwisePage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `wordwise-model-${new Date().toISOString()}.json`;
+      a.download = `wordwise-model-${modelRef.current.type}-${new Date().toISOString().slice(0,10)}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -293,18 +336,25 @@ export default function WordwisePage() {
         modelRef.current = loaded.model;
         vocabDataRef.current = loaded.vocabData;
         
-        setEmbeddingDim(loaded.model.embeddingDim);
-        setHiddenSize(loaded.model.hiddenSize);
-
+        if (loaded.model.type === 'text') {
+            setTrainingData({type: 'text', corpus: 'Загружена текстовая модель. Корпус не восстанавливается.'});
+            const textModel = loaded.model as WordWiseModel;
+            const textVocab = loaded.vocabData as { vocab: string[] };
+            setEmbeddingDim(textModel.embeddingDim);
+            setHiddenSize(textModel.hiddenSize);
+            const wordsForSampling = textVocab.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
+            const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
+            setSampleWords(shuffled.slice(0, 4));
+        } else if (loaded.model.type === 'image') {
+            setTrainingData({type: 'image', items: []});
+            toast({title: "Загружена модель изображений", description: "Данные для обучения не были восстановлены."});
+        }
+        
         setIsInitialized(true);
         setIsTrained(true);
         setStatus('Модель успешно загружена. Готова к дообучению или использованию.');
         setOutput('Модель загружена.');
         setLossHistory([]);
-
-        const wordsForSampling = loaded.vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
-        const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
-        setSampleWords(shuffled.slice(0, 4));
 
         toast({ title: "Успех", description: "Модель успешно загружена." });
       } catch (error) {
@@ -338,10 +388,19 @@ export default function WordwisePage() {
               <CardDescription>Выберите тип данных для обучения: текст или изображения.</CardDescription>
             </CardHeader>
             <CardContent>
-                <Tabs defaultValue="text" className="w-full">
+                <Tabs defaultValue="text" className="w-full" onValueChange={(value) => {
+                    if (value === 'text') {
+                        setTrainingData({ type: 'text', corpus: defaultCorpus });
+                    } else {
+                        setTrainingData({ type: 'image', items: [] });
+                    }
+                    setIsInitialized(false);
+                    setIsTrained(false);
+                    setStatus('Готов к инициализации.');
+                }}>
                     <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger value="text" onClick={() => setTrainingData({ type: 'text', corpus: defaultCorpus })}><FileText className="w-4 h-4 mr-2"/>Текст</TabsTrigger>
-                        <TabsTrigger value="image" onClick={() => setTrainingData({ type: 'image', items: [] })}><ImagePlus className="w-4 h-4 mr-2"/>Изображения</TabsTrigger>
+                        <TabsTrigger value="text"><FileText className="w-4 h-4 mr-2"/>Текст</TabsTrigger>
+                        <TabsTrigger value="image"><ImagePlus className="w-4 h-4 mr-2"/>Изображения</TabsTrigger>
                     </TabsList>
                     <TabsContent value="text" className="mt-4">
                         <Label htmlFor="corpus">Ваш обучающий корпус:</Label>
@@ -364,12 +423,12 @@ export default function WordwisePage() {
                         <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-6">
                             <ImagePlus className="w-12 h-12 text-gray-400 mb-2"/>
                             <Label htmlFor="image-upload" className="mb-2 text-center text-sm text-gray-600">Перетащите файлы сюда или нажмите для выбора</Label>
-                             <Button asChild variant="outline" size="sm">
+                             <Button asChild variant="outline" size="sm" disabled={isInitialized || isTraining}>
                                 <Label htmlFor="image-upload" className="cursor-pointer">
                                     Загрузить изображения
                                 </Label>
                              </Button>
-                            <Input id="image-upload" type="file" multiple accept="image/*" className="sr-only" onChange={handleImageUpload}/>
+                            <Input id="image-upload" type="file" multiple accept="image/*" className="sr-only" onChange={handleImageUpload} disabled={isInitialized || isTraining} />
                             <p className="text-xs text-gray-500 mt-2">Загрузите изображения для обучения</p>
                         </div>
                          {trainingData.type === 'image' && trainingData.items.length > 0 && (
@@ -405,15 +464,28 @@ export default function WordwisePage() {
                         </div>
                     </AccordionTrigger>
                     <AccordionContent className="space-y-4 pt-4">
+                        {trainingData.type === 'text' ? (
+                           <>
+                               <div className="grid grid-cols-2 gap-4">
+                                 <div>
+                                    <Label htmlFor="embeddingDim">Размер эмбеддинга</Label>
+                                    <Input id="embeddingDim" type="number" value={embeddingDim} onChange={e => setEmbeddingDim(parseInt(e.target.value, 10))} min="8" step="8" disabled={isTraining || isInitialized}/>
+                                 </div>
+                                 <div>
+                                    <Label htmlFor="hiddenSize">Размер скрытого слоя</Label>
+                                    <Input id="hiddenSize" type="number" value={hiddenSize} onChange={e => setHiddenSize(parseInt(e.target.value, 10))} min="16" step="16" disabled={isTraining || isInitialized}/>
+                                 </div>
+                               </div>
+                           </>
+                        ) : (
+                           <>
+                               <div>
+                                  <Label htmlFor="imageSize">Размер изображения (px)</Label>
+                                  <Input id="imageSize" type="number" value={imageSize} onChange={e => setImageSize(parseInt(e.target.value, 10))} min="16" step="8" disabled={isTraining || isInitialized}/>
+                               </div>
+                           </>
+                        )}
                        <div className="grid grid-cols-2 gap-4">
-                         <div>
-                            <Label htmlFor="embeddingDim">Размер эмбеддинга</Label>
-                            <Input id="embeddingDim" type="number" value={embeddingDim} onChange={e => setEmbeddingDim(parseInt(e.target.value, 10))} min="8" step="8" disabled={isTraining || isInitialized}/>
-                         </div>
-                         <div>
-                            <Label htmlFor="hiddenSize">Размер скрытого слоя</Label>
-                            <Input id="hiddenSize" type="number" value={hiddenSize} onChange={e => setHiddenSize(parseInt(e.target.value, 10))} min="16" step="16" disabled={isTraining || isInitialized}/>
-                         </div>
                          <div>
                             <Label htmlFor="batchSize">Размер батча</Label>
                             <Input id="batchSize" type="number" value={batchSize} onChange={e => setBatchSize(parseInt(e.target.value, 10))} min="1" disabled={isTraining}/>
@@ -497,7 +569,7 @@ export default function WordwisePage() {
                           key={word}
                           variant="outline"
                           onClick={() => generateText(word)}
-                          disabled={isTraining || !isTrained}
+                          disabled={isTraining || !isTrained || trainingData.type !== 'text'}
                         >
                           <TestTube2 className="mr-2 h-4 w-4" />
                           {word}...

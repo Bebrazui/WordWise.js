@@ -1,13 +1,24 @@
 // src/lib/model.ts
-import { Embedding, Linear, LSTMCell, Layer } from './layers';
+import { Embedding, Linear, LSTMCell, Layer, Conv2d, Flatten, relu } from './layers';
 import { Tensor } from './tensor';
 
-type VocabDataType = {
+type TextVocabDataType = {
   vocab: string[];
   wordToIndex: Map<string, number>;
   indexToWord: Map<number, string>;
   vocabSize: number;
 };
+
+type ImageVocabDataType = {
+  labels: string[];
+  labelToIndex: Map<string, number>;
+  indexToLabel: Map<number, string>;
+  numClasses: number;
+}
+
+export type VocabData = TextVocabDataType | ImageVocabDataType;
+
+export type BaseModel = WordWiseModel | ImageWiseModel;
 
 /**
  * WordWiseModel: Простая рекуррентная нейронная сеть для обработки текста,
@@ -15,6 +26,7 @@ type VocabDataType = {
  * Предназначена для задач предсказания следующего слова.
  */
 export class WordWiseModel {
+  type: 'text' = 'text';
   embeddingLayer: Embedding; // Слой для преобразования индексов слов в векторы
   lstmCell: LSTMCell;         // Ячейка LSTM для обработки последовательностей
   outputLayer: Linear;        // Выходной слой для предсказания следующего слова
@@ -46,7 +58,10 @@ export class WordWiseModel {
    * - `h`: Новое скрытое состояние LSTM: [batchSize, hiddenSize].
    * - `c`: Новое состояние ячейки LSTM: [batchSize, hiddenSize].
    */
-  forwardStep(input: Tensor, prevH: Tensor, prevC: Tensor): { outputLogits: Tensor, h: Tensor, c: Tensor } {
+  forward(input: Tensor, prevH?: Tensor, prevC?: Tensor): { outputLogits: Tensor, h: Tensor, c: Tensor } {
+    if (!prevH || !prevC) {
+      throw new Error("Missing previous hidden/cell state for WordWiseModel forward pass");
+    }
     // 1. Embedding Layer: преобразует индексы слов в плотные векторы
     const embeddedInput = this.embeddingLayer.forward(input); // [batchSize, embeddingDim]
 
@@ -93,6 +108,53 @@ export class WordWiseModel {
   }
 }
 
+export class ImageWiseModel {
+    type: 'image' = 'image';
+    // A very simple CNN: Conv -> ReLU -> Flatten -> Linear
+    conv1: Conv2d;
+    flatten: Flatten;
+    linear1: Linear;
+    public numClasses: number;
+
+    constructor(numClasses: number, imageWidth: number, imageHeight: number, inChannels: number) {
+        this.numClasses = numClasses;
+
+        // Note: This is a simplified architecture. A real one would have more layers.
+        // The output size of Conv2d and Flatten would need to be calculated precisely.
+        this.conv1 = new Conv2d(inChannels, 8, 3, 1, 1); // outChannels=8, kernel=3x3
+        this.flatten = new Flatten();
+        
+        // This is a simplification. The real input size to the linear layer
+        // depends on the output of the conv layer.
+        const flattenedSize = 8 * imageWidth * imageHeight;
+        this.linear1 = new Linear(flattenedSize, numClasses);
+    }
+    
+    forward(input: Tensor): { outputLogits: Tensor } {
+        // Input shape: [batch, channels, height, width]
+        let x = this.conv1.forward(input);
+        x = relu(x);
+        x = this.flatten.forward(x);
+        const outputLogits = this.linear1.forward(x);
+        return { outputLogits };
+    }
+
+    getParameters(): Tensor[] {
+        return [
+            ...this.conv1.getParameters(),
+            ...this.linear1.getParameters()
+        ];
+    }
+    
+    getLayers(): { [key: string]: Layer } {
+        return {
+            conv1: this.conv1,
+            flatten: this.flatten,
+            linear1: this.linear1,
+        }
+    }
+}
+
 // Функции для сохранения и загрузки модели
 
 /**
@@ -101,27 +163,39 @@ export class WordWiseModel {
  * @param vocabData Данные словаря.
  * @returns JSON-строка.
  */
-export function serializeModel(model: WordWiseModel, vocabData: VocabDataType): string {
+export function serializeModel(model: BaseModel, vocabData: VocabData): string {
     const layersData: { [key: string]: { [key: string]: { data: number[], shape: number[] } } } = {};
 
     Object.entries(model.getLayers()).forEach(([layerName, layer]) => {
         layersData[layerName] = {};
         layer.getParameters().forEach(param => {
+            if (!param.name) {
+                console.warn(`Parameter in layer ${layerName} is missing a name and will not be serialized.`);
+                return;
+            }
             layersData[layerName][param.name] = {
                 data: Array.from(param.data),
                 shape: param.shape
             };
         });
     });
+    
+    let architecture: any = { type: model.type };
+    let vocabInfo: any = {};
+
+    if (model.type === 'text' && 'vocab' in vocabData) {
+        architecture = { ...architecture, vocabSize: model.vocabSize, embeddingDim: model.embeddingDim, hiddenSize: model.hiddenSize };
+        vocabInfo = { vocab: vocabData.vocab };
+    } else if (model.type === 'image' && 'labels' in vocabData) {
+        architecture = { ...architecture, numClasses: model.numClasses };
+        vocabInfo = { labels: vocabData.labels };
+    }
+
 
     const dataToSave = {
-        architecture: {
-            vocabSize: model.vocabSize,
-            embeddingDim: model.embeddingDim,
-            hiddenSize: model.hiddenSize
-        },
+        architecture,
         weights: layersData,
-        vocab: vocabData.vocab
+        ...vocabInfo
     };
 
     return JSON.stringify(dataToSave, null, 2);
@@ -132,35 +206,56 @@ export function serializeModel(model: WordWiseModel, vocabData: VocabDataType): 
  * @param jsonString JSON-строка с данными модели.
  * @returns Объект с экземпляром WordWiseModel и данными словаря.
  */
-export function deserializeModel(jsonString: string): { model: WordWiseModel, vocabData: VocabDataType } {
+export function deserializeModel(jsonString: string): { model: BaseModel, vocabData: VocabData } {
     const savedData = JSON.parse(jsonString);
 
-    if (!savedData.architecture || !savedData.weights || !savedData.vocab) {
-        throw new Error("Invalid model file format.");
+    if (!savedData.architecture || !savedData.weights) {
+        throw new Error("Invalid model file format: missing architecture or weights.");
     }
     
-    // Восстанавливаем словарь
-    const vocab = savedData.vocab;
-    const wordToIndex = new Map(vocab.map((word: string, i: number) => [word, i]));
-    const indexToWord = new Map(vocab.map((word: string, i: number) => [i, word]));
-    const vocabSize = vocab.length;
-    const vocabData = { vocab, wordToIndex, indexToWord, vocabSize };
-    
-    // Проверяем соответствие архитектуры
-    if (vocabSize !== savedData.architecture.vocabSize) {
-        throw new Error("Vocabulary size mismatch between loaded model and its architecture description.");
+    const { architecture, weights } = savedData;
+    let model: BaseModel;
+    let vocabData: VocabData;
+
+    if (architecture.type === 'text') {
+        if (!savedData.vocab) throw new Error("Missing vocab for text model.");
+        const vocab = savedData.vocab;
+        const wordToIndex = new Map(vocab.map((word: string, i: number) => [word, i]));
+        const indexToWord = new Map(vocab.map((word: string, i: number) => [i, word]));
+        const vocabSize = vocab.length;
+        vocabData = { vocab, wordToIndex, indexToWord, vocabSize };
+        
+        if (vocabSize !== architecture.vocabSize) {
+             throw new Error("Vocabulary size mismatch between loaded model and its architecture description.");
+        }
+        
+        const { embeddingDim, hiddenSize } = architecture;
+        model = new WordWiseModel(vocabSize, embeddingDim, hiddenSize);
+    } else if (architecture.type === 'image') {
+        if (!savedData.labels) throw new Error("Missing labels for image model.");
+        const labels = savedData.labels;
+        const labelToIndex = new Map(labels.map((label: string, i: number) => [label, i]));
+        const indexToLabel = new Map(labels.map((label: string, i: number) => [i, label]));
+        const numClasses = labels.length;
+        vocabData = { labels, labelToIndex, indexToLabel, numClasses };
+
+        if (numClasses !== architecture.numClasses) {
+            throw new Error("Number of classes mismatch between loaded model and its architecture description.");
+        }
+        // NOTE: We're passing dummy dimensions here. In a real scenario, this should be saved in the model JSON.
+        model = new ImageWiseModel(numClasses, 32, 32, 3);
+    } else {
+        throw new Error(`Unknown model type in saved file: ${architecture.type}`);
     }
-    
-    // Создаем новую модель с той же архитектурой
-    const { embeddingDim, hiddenSize } = savedData.architecture;
-    const model = new WordWiseModel(vocabSize, embeddingDim, hiddenSize);
+
 
     // Загружаем веса
     Object.entries(model.getLayers()).forEach(([layerName, layer]) => {
-        const savedLayerWeights = savedData.weights[layerName];
+        const savedLayerWeights = weights[layerName];
         if (!savedLayerWeights) throw new Error(`Weights for layer ${layerName} not found in file.`);
         
         layer.getParameters().forEach(param => {
+            if (!param.name) return; // Skip unnamed params
             const savedParam = savedLayerWeights[param.name];
             if (!savedParam) throw new Error(`Parameter ${param.name} for layer ${layerName} not found.`);
             if (param.size !== savedParam.data.length) throw new Error(`Weight size mismatch for ${param.name}.`);

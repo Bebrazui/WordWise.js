@@ -2,16 +2,21 @@
 // src/app/wordwise/wordwise.worker.ts
 /// <reference lib="webworker" />
 
-import { WordWiseModel, serializeModel } from '@/lib/model';
+import { WordWiseModel, ImageWiseModel, serializeModel, BaseModel, VocabData } from '@/lib/model';
 import { SGD } from '@/lib/optimizer';
 import { crossEntropyLossWithSoftmaxGrad } from '@/lib/layers';
-import { buildVocabulary, wordsToInputTensors, wordsToTargetTensors, createBatches, indexToOneHot } from '@/utils/tokenizer';
+import { buildTextVocabulary, wordsToInputTensors, wordsToTargetTensors, createTextBatches } from '@/utils/tokenizer';
+import { buildImageVocabulary, createImageBatches, imageToTensor } from '@/utils/image-processor';
 import { Tensor } from '@/lib/tensor';
 
-let model: WordWiseModel | null = null;
+let model: BaseModel | null = null;
 let optimizer: SGD | null = null;
-let vocabData: { vocab: string[]; wordToIndex: Map<string, number>; indexToWord: Map<number, string>; vocabSize: number } | null = null;
+let vocabData: VocabData | null = null;
 let trainingStopFlag = false;
+let trainingData: {
+    inputs: Tensor[],
+    targets: Tensor[],
+} | null = null;
 
 /**
  * Обработчик сообщений от основного потока.
@@ -23,7 +28,7 @@ self.onmessage = async (event: MessageEvent) => {
   try {
     switch (type) {
       case 'initialize':
-        initialize(payload);
+        await initialize(payload);
         break;
       case 'train':
         trainingStopFlag = false;
@@ -31,9 +36,6 @@ self.onmessage = async (event: MessageEvent) => {
         break;
       case 'stop':
         trainingStopFlag = true;
-        break;
-      case 'generate':
-        generate(payload);
         break;
     }
   } catch (error) {
@@ -44,49 +46,87 @@ self.onmessage = async (event: MessageEvent) => {
 /**
  * Инициализирует модель, словарь и оптимизатор.
  */
-function initialize(payload: { textCorpus: string; embeddingDim: number; hiddenSize: number; learningRate: number }) {
-  const { textCorpus, embeddingDim, hiddenSize, learningRate } = payload;
-  
-  // Используем регулярное выражение для токенизации, чтобы включить кириллицу
-  const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
-  vocabData = buildVocabulary(words.join(' '));
-  
-  model = new WordWiseModel(vocabData.vocabSize, embeddingDim, hiddenSize);
+async function initialize(payload: any) {
+  const { learningRate } = payload;
   optimizer = new SGD(learningRate);
-
-  const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
-  const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
   
-  self.postMessage({ 
-    type: 'initialized', 
-    payload: { 
-      vocabSize: vocabData.vocabSize,
-      sampleWords: shuffled.slice(0, 4)
-    } 
-  });
+  if (payload.type === 'text') {
+    const { textCorpus, embeddingDim, hiddenSize } = payload;
+    vocabData = buildTextVocabulary(textCorpus);
+    model = new WordWiseModel(vocabData.vocabSize, embeddingDim, hiddenSize);
+    
+    const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
+    trainingData = {
+        inputs: wordsToInputTensors(words.slice(0, -1), vocabData.wordToIndex),
+        targets: wordsToTargetTensors(words.slice(1), vocabData.wordToIndex, vocabData.vocabSize)
+    };
+    
+    const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
+    const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
+  
+    self.postMessage({ 
+      type: 'initialized', 
+      payload: { 
+        type: 'text',
+        vocabSize: vocabData.vocabSize,
+        sampleWords: shuffled.slice(0, 4)
+      } 
+    });
+  } else if (payload.type === 'image') {
+    const { items, imageSize } = payload;
+    vocabData = buildImageVocabulary(items.map((item: any) => item.label));
+    model = new ImageWiseModel(vocabData.numClasses, imageSize, imageSize, 3); // Assuming 3 channels (RGB)
+    
+    const imageTensors: Tensor[] = [];
+    for (const item of items) {
+        const tensor = await imageToTensor(item.dataUrl, imageSize, imageSize);
+        imageTensors.push(tensor);
+    }
+
+    const targetTensors = items.map((item: any) => {
+        const index = vocabData!.labelToIndex.get(item.label)!;
+        const oneHot = new Float32Array(vocabData!.numClasses).fill(0);
+        oneHot[index] = 1;
+        return new Tensor(oneHot, [1, vocabData!.numClasses]);
+    });
+
+    trainingData = {
+        inputs: imageTensors,
+        targets: targetTensors
+    };
+
+     self.postMessage({ 
+      type: 'initialized', 
+      payload: { 
+        type: 'image',
+        numClasses: vocabData.numClasses,
+      } 
+    });
+  } else {
+    throw new Error('Unknown initialization type');
+  }
 }
 
 /**
  * Асинхронно обучает модель.
  */
-async function train(payload: { textCorpus: string, numEpochs: number, learningRate: number, batchSize: number, lossHistory: {epoch: number, loss: number}[] }) {
-  if (!model || !vocabData || !optimizer) {
-    throw new Error('Модель не инициализирована.');
+async function train(payload: { numEpochs: number, learningRate: number, batchSize: number, lossHistory: {epoch: number, loss: number}[] }) {
+  if (!model || !vocabData || !optimizer || !trainingData) {
+    throw new Error('Модель не инициализирована или нет данных для обучения.');
   }
 
-  const { textCorpus, numEpochs, learningRate, batchSize, lossHistory } = payload;
+  const { numEpochs, learningRate, batchSize, lossHistory } = payload;
   optimizer.learningRate = learningRate;
 
-  const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
-  if (words.length < 2) {
-    throw new Error('Недостаточно слов для обучения в корпусе.');
+  const batches = model.type === 'text'
+    ? createTextBatches(trainingData.inputs, trainingData.targets, batchSize)
+    : createImageBatches(trainingData.inputs, trainingData.targets, batchSize);
+
+  if (batches.length === 0) {
+    throw new Error("Не удалось создать батчи для обучения. Проверьте данные.");
   }
 
-  const inputTensors = wordsToInputTensors(words.slice(0, -1), vocabData.wordToIndex);
-  const targetTensors = wordsToTargetTensors(words.slice(1), vocabData.wordToIndex, vocabData.vocabSize);
-  const batches = createBatches(inputTensors, targetTensors, batchSize);
-
-  const startEpoch = lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch + 1 : 1;
+  const startEpoch = lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch + 1 : 0;
   
   for (let epoch = 0; epoch < numEpochs; epoch++) {
     if (trainingStopFlag) {
@@ -96,22 +136,22 @@ async function train(payload: { textCorpus: string, numEpochs: number, learningR
 
     let epochLoss = 0;
     
-    // Перебираем батчи для одной эпохи
     for (const batch of batches) {
-      // Состояния нужно сбрасывать для каждого нового батча, так как последовательности в батчах независимы.
-      // Но для stateful RNN между батчами одной эпохи состояние можно сохранять.
-      // Для простоты здесь мы сбрасываем состояние для каждого батча.
-      let h = model.initializeStates(batchSize).h0;
-      let c = model.initializeStates(batchSize).c0;
-
-      const { outputLogits: predictionLogits, h: nextH, c: nextC } = model.forwardStep(batch.inputs, h, c);
-      h = nextH.detach(); // Отсоединяем от графа, чтобы градиент не тёк между батчами
-      c = nextC.detach();
-
+      let predictionLogits;
+      if (model.type === 'text') {
+        // Stateful LSTM: carry state through the sequence (not implemented here for simplicity)
+        // For now, reset state per batch.
+        let {h0: h, c0: c} = (model as WordWiseModel).initializeStates(batch.inputs.shape[0]);
+        // Note: A true RNN would loop over a sequence within the batch.
+        // Our current setup treats each word in the batch as a separate sequence of 1.
+        predictionLogits = model.forward(batch.inputs, h, c).outputLogits;
+      } else { // image model
+        predictionLogits = (model as ImageWiseModel).forward(batch.inputs).outputLogits;
+      }
+      
       const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batch.targets);
       epochLoss += lossTensor.data[0];
       
-      // Обратный проход и шаг оптимизатора
       lossTensor.backward();
       optimizer.step(model.getParameters());
     }
@@ -128,73 +168,11 @@ async function train(payload: { textCorpus: string, numEpochs: number, learningR
       },
     });
 
-    // Даем главному потоку время на обработку сообщений
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 10));
   }
   
-  // Сериализуем обученную модель и отправляем обратно
   const modelJson = serializeModel(model, vocabData);
   self.postMessage({ type: 'training-complete', payload: { modelJson } });
 }
 
-
-/**
- * Генерирует текст на основе начального слова.
- */
-function generate(payload: { startWord: string, numWords: number, temperature: number }) {
-    if (!model || !vocabData) {
-        throw new Error('Генерация невозможна: модель не обучена.');
-    }
-    
-    const { startWord, numWords, temperature } = payload;
-    const { wordToIndex, indexToWord } = vocabData;
-
-    let currentWord = startWord.toLowerCase();
-    let initialOutput = '';
-    if (!wordToIndex.has(currentWord)) {
-        currentWord = '<unk>';
-        initialOutput = `Начальное слово "${startWord}" не найдено. Используем "<unk>".\n`;
-    }
-
-    let generatedSequence = [currentWord];
-    let h = model.initializeStates(1).h0;
-    let c = model.initializeStates(1).c0;
-    
-    for (let i = 0; i < numWords; i++) {
-        const inputTensor = new Tensor([wordToIndex.get(currentWord) || 0], [1]);
-        const { outputLogits, h: nextH, c: nextC } = model.forwardStep(inputTensor, h, c);
-        h = nextH;
-        c = nextC;
-
-        // Note: For full functionality, getWordFromPrediction logic should be here
-        // or the function needs to be available in the worker scope.
-        // Simplified greedy search for now:
-        let maxIdx = 0;
-        let maxVal = -Infinity;
-        for (let j = 0; j < outputLogits.size; j++) {
-            if (outputLogits.data[j] > maxVal) {
-                maxVal = outputLogits.data[j];
-                maxIdx = j;
-            }
-        }
-        const chosenWord = indexToWord.get(maxIdx) || '<unk>';
-        
-        if (chosenWord === 'вопрос' || chosenWord === 'ответ') {
-            continue;
-        }
-
-        generatedSequence.push(chosenWord);
-        currentWord = chosenWord;
-
-        if (chosenWord === '<unk>') {
-            break;
-        }
-    }
-
-    const generatedText = initialOutput + `Сгенерированный текст: ${generatedSequence.join(' ')}`;
-    self.postMessage({ type: 'generation-result', payload: { text: generatedText } });
-}
-
 self.postMessage({ type: 'worker-ready' });
-
-    

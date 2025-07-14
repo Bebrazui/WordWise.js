@@ -6,7 +6,7 @@ import { Tensor } from '../lib/tensor';
  * @param text Входной текстовый корпус.
  * @returns Объект со словарем (массив слов), маппингами слов в индексы и обратно, и размером словаря.
  */
-export function buildVocabulary(text: string): { vocab: string[]; wordToIndex: Map<string, number>; indexToWord: Map<number, string>; vocabSize: number } {
+export function buildTextVocabulary(text: string): { vocab: string[]; wordToIndex: Map<string, number>; indexToWord: Map<number, string>; vocabSize: number } {
   // Улучшенная токенизация: разбиваем на слова (латиница и кириллица), переводим в нижний регистр
   const words = text.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
   const uniqueWords = Array.from(new Set(words));
@@ -150,51 +150,38 @@ export function getWordFromPrediction(
 
 /**
  * Создает батчи из последовательности входных и целевых тензоров.
- * Для неполных батчей добавляет паддинг.
  * @param inputTensors Массив входных тензоров.
  * @param targetTensors Массив целевых тензоров.
  * @param batchSize Желаемый размер батча.
  * @returns Массив батчей, каждый из которых содержит объединенные входные и целевые тензоры.
  */
-export function createBatches(inputTensors: Tensor[], targetTensors: Tensor[], batchSize: number): { inputs: Tensor, targets: Tensor }[] {
+export function createTextBatches(inputTensors: Tensor[], targetTensors: Tensor[], batchSize: number): { inputs: Tensor, targets: Tensor }[] {
   const batches = [];
   const totalSteps = inputTensors.length;
 
   for (let i = 0; i < totalSteps; i += batchSize) {
     const currentInputBatch = inputTensors.slice(i, i + batchSize);
     const currentTargetBatch = targetTensors.slice(i, i + batchSize);
-
     const actualBatchSize = currentInputBatch.length;
 
-    // Паддинг для последнего батча, если он неполный
-    if (actualBatchSize < batchSize) {
-        const paddingCount = batchSize - actualBatchSize;
-        // Для входных индексов: добавляем индекс <unk> (0)
-        const unkTensor = new Tensor([0], [1]);
-        for (let k = 0; k < paddingCount; k++) {
-            currentInputBatch.push(unkTensor);
-        }
-        // Для целевых one-hot векторов: добавляем нулевой вектор
-        const zeroTarget = new Tensor(new Float32Array(targetTensors[0].size).fill(0), targetTensors[0].shape);
-        for (let k = 0; k < paddingCount; k++) {
-            currentTargetBatch.push(zeroTarget);
-        }
-    }
+    // This logic assumes we process word by word, which isn't ideal for batching RNNs.
+    // A better approach would be to batch sequences, but for simplicity, we batch individual steps.
+    if (actualBatchSize === 0) continue;
     
     // Объединяем тензоры в один батчевый тензор
-    const batchedInputData = new Float32Array(batchSize);
-    for(let j=0; j<batchSize; j++) {
+    const batchedInputData = new Float32Array(actualBatchSize);
+    for(let j=0; j<actualBatchSize; j++) {
         batchedInputData[j] = currentInputBatch[j].data[0];
     }
     
     const vocabSize = currentTargetBatch[0].shape[1];
-    const batchedTargetData = new Float32Array(batchSize * vocabSize);
-     for(let j=0; j<batchSize; j++) {
+    const batchedTargetData = new Float32Array(actualBatchSize * vocabSize);
+     for(let j=0; j<actualBatchSize; j++) {
         batchedTargetData.set(currentTargetBatch[j].data, j * vocabSize);
     }
     
-    const batchedInputTensor = new Tensor(batchedInputData, [batchSize, 1]); // [batchSize, 1]
-    const batchedTargetTensor = new Tensor(batchedTargetData, [batchSize, vocabSize]); // [batchSize, vocabSize]
+    const batchedInputTensor = new Tensor(batchedInputData, [actualBatchSize, 1]); // [batchSize, 1]
+    const batchedTargetTensor = new Tensor(batchedTargetData, [actualBatchSize, vocabSize]); // [batchSize, vocabSize]
 
     batches.push({ inputs: batchedInputTensor, targets: batchedTargetTensor });
   }
