@@ -74,7 +74,7 @@ type WordConnections = {
 };
 
 type LearnedWords = {
-  [word: string]: string;
+  [word:string]: string;
 };
 
 type Morphology = {
@@ -104,6 +104,62 @@ const sessionMemory = {
 
 // --- Pipeline Stage 1: Input Cleaner & Lemmatizer ---
 /**
+ * Simple rule-based lemmatizer/stemmer. It's not perfect but helps handle basic word forms.
+ * It now prioritizes checking for a direct match in synonyms before attempting to stem.
+ * @param word The word to lemmatize.
+ * @returns The lemmatized (base) form of the word.
+ */
+function lemmatize(word: string): string {
+    // 1. Check if the word is already a known base form or a direct synonym key.
+    if(syn[word] || wc[word] || kb[word]) return word;
+    
+    // 2. Check if the word is a known synonym form of a base word.
+    for(const key in syn){
+        if(syn[key].includes(word)) return key;
+    }
+
+    // 3. Adjective endings (e.g., "хорошее" -> "хороший")
+    const adjEndings = ['ый', 'ий', 'ая', 'яя', 'ое', 'ее', 'ые', 'ие', 'его', 'ого', 'ему', 'ому', 'ую', 'юю', 'ой', 'ей'];
+    for (const ending of adjEndings) {
+        if (word.endsWith(ending)) {
+            let base = word.slice(0, -ending.length);
+            // Attempt to form a common masculine adjective
+            if (syn[base + 'ий'] || Object.values(syn).flat().includes(base + 'ий')) return base + 'ий';
+            if (syn[base + 'ый'] || Object.values(syn).flat().includes(base + 'ый')) return base + 'ый';
+            // A common case: "хорошее" -> "хорош" -> "хорошо" (adverb)
+            if (syn[base + 'о']) return base + 'о';
+            // Default to a plausible base form if others fail
+            return base + 'ий';
+        }
+    }
+
+    // 4. Noun endings
+    const nounEndings = ['а', 'у', 'е', 'ы', 'ом', 'ам', 'ах', 'ой', 'ей', 'ю', 'ями', 'ами'];
+    for (const ending of nounEndings) {
+        if (word.length > 3 && word.endsWith(ending)) {
+            let base = word.slice(0, -ending.length);
+            // If the base form exists in our knowledge, use it.
+            if (kb[base] || wc[base] || syn[base]) return base;
+            // Try adding a default ending if the direct base is not found
+            if(syn[base] || wc[base]) return base;
+        }
+    }
+    
+    // 5. Verb endings
+    const verbEndings = ['ешь', 'ет', 'ем', 'ете', 'ут', 'ют', 'ишь', 'ит', 'им', 'ите', 'ат', 'ят', 'л', 'ла', 'ло', 'ли'];
+    for (const ending of verbEndings) {
+        if(word.endsWith(ending)) {
+            let base = word.slice(0, -ending.length);
+            if(syn[base + 'ть'] || wc[base + 'ть']) return base + 'ть';
+            if(syn[base + 'ти'] || wc[base + 'ти']) return base + 'ти';
+        }
+    }
+
+    return word; // return original if no rule matched
+}
+
+
+/**
  * Prepares user input for processing by cleaning, normalizing, and lemmatizing it.
  * @param userInput The raw user input.
  * @returns A cleaned, lowercased string of lemmatized words.
@@ -116,48 +172,6 @@ function cleanAndNormalizeInput(userInput: string): string {
   return lemmatizedWords.join(' ');
 }
 
-/**
- * Simple rule-based lemmatizer/stemmer for Russian.
- * It's not perfect but helps handle basic word forms.
- * @param word The word to lemmatize.
- * @returns The lemmatized (base) form of the word.
- */
-function lemmatize(word: string): string {
-    // Perfective -> Imperfective (simple cases)
-    if (word.endsWith('ить')) return word.slice(0, -2) + 'ить';
-    if (word.endsWith('ать')) return word.slice(0, -2) + 'ать';
-
-    // Adjective endings
-    const adjEndings = ['ый', 'ий', 'ая', 'яя', 'ое', 'ее', 'ые', 'ие', 'его', 'ого', 'ему', 'ому', 'ую', 'юю', 'ей', 'ой'];
-    for (const ending of adjEndings) {
-        if (word.endsWith(ending)) {
-            // A very simple rule: try to get a base and add a common ending.
-            // "хорошее" -> "хорош" -> "хорошо" (if in synonyms) or "хороший"
-            let base = word.slice(0, -ending.length);
-            if (syn[base + 'о']) return base + 'о';
-            if (syn[base + 'ий']) return base + 'ий';
-            return base + 'ий'; // default to masculine
-        }
-    }
-
-    // Noun endings
-    const nounEndings = ['а', 'у', 'е', 'ы', 'ом', 'ам', 'ах'];
-    for (const ending of nounEndings) {
-        if (word.length > 3 && word.endsWith(ending)) {
-            let base = word.slice(0, -ending.length);
-            // If the base form exists in our knowledge, use it.
-            if (kb[base] || wc[base] || syn[base]) return base;
-        }
-    }
-    
-    // Check if the word is already a known base form or synonym
-    if(syn[word]) return word;
-    for(const key in syn){
-        if(syn[key].includes(word)) return key;
-    }
-
-    return word; // return original if no rule matched
-}
 
 /**
  * Calculates the Levenshtein distance between two strings.
@@ -258,7 +272,7 @@ function handleDirectResponse(normalizedInput: string, history: string[]): strin
         if (normalizedInput === "нет" || normalizedInput === "неправильно") {
             return "Понял, моя ошибка. Попробуй, пожалуйста, перефразировать свой вопрос, чтобы я лучше понял.";
         }
-        if (normalizedInput === "да" || normalizedInput === "правильно") {
+        if (normalizedInput === "да" || normalizedInput === "правильно" || normalizedInput === "ага") {
             return "Отлично! Рад, что мы на одной волне.";
         }
     }
@@ -267,7 +281,7 @@ function handleDirectResponse(normalizedInput: string, history: string[]): strin
 
 // --- Pipeline Stage 4: Contextual Analyzer ---
 const questionAboutWellbeing = [
-  'как дела', 'как ты', 'как поживаешь', 'как твое', 'как сам', 'как настроение',
+  'как дела', 'как ты', 'как поживаешь', 'как твое', 'как сам', 'как настроение', 'что нового',
 ];
 const positiveUserStates = [
   'хорошо', 'нормально', 'отлично', 'замечательно', 'прекрасно', 'порядок', 'ничего', 'пойдет', 'хороший'
@@ -283,11 +297,11 @@ function handleWellbeingResponse(normalizedInput: string, history: string[]): st
     if (history.length === 0) return null;
 
     const lastBotMessage = history[history.length - 1].toLowerCase();
-    const wasAsked = questionAboutWellbeing.some(q => lastBotMessage.includes(q));
+    const wasAsked = questionAboutWellbeing.some(q => lastBotMessage.includes(lemmatize(q)));
     if (!wasAsked) return null;
 
     const inputWords = normalizedInput.split(' ');
-    const isDirectAnswer = positiveUserStates.some(state => inputWords.includes(state));
+    const isDirectAnswer = positiveUserStates.some(state => inputWords.includes(lemmatize(state)));
     const isPersonal = ['я', 'у меня'].some(marker => normalizedInput.startsWith(marker));
     
     if (isDirectAnswer || isPersonal) {
@@ -320,7 +334,7 @@ function findBestIntentMatch(normalizedInput: string): { intent: string; score: 
 
     const intentData = kb[intent];
     for (const phrase of intentData.phrases) {
-      // Assuming phrases in KB are already lemmatized
+      // KB phrases are assumed to be lemmatized
       const lowerPhrase = phrase.toLowerCase();
       
       // Direct phrase containment check
@@ -438,7 +452,7 @@ function generateConnectionResponse(normalizedInput: string): string | null {
 function getFallbackResponse(normalizedInput: string): string {
     const wordsInInput = normalizedInput.split(/\s+/).filter(w => w);
     // Try to find a word that is not a known synonym or in the knowledge base
-    let unknownWord = wordsInInput.find(w => !syn[w] && !Object.keys(kb).some(k => kb[k].phrases.includes(w)));
+    let unknownWord = wordsInInput.find(w => !syn[w] && !Object.keys(kb).some(k => kb[k].phrases.includes(w)) && !lw[w as keyof typeof lw]);
     
     // If all words are known, pick the most complex one
     if (!unknownWord && wordsInInput.length > 0) {
@@ -449,7 +463,7 @@ function getFallbackResponse(normalizedInput: string): string {
 
 
     const thoughtfulResponses = [
-        `Я размышляю над словом "${unknownWord}"... и что оно может означать в этом контексте. Можешь объяснить?`,
+        `Я размышляю над словом "${unknownWord}"... и что оно может означать в этом контексте. Можешь объяснить? Например: ${unknownWord} - это...`,
         'Это сложный вопрос. Мои алгоритмы ищут наиболее подходящий ответ, но пока безуспешно. Попробуешь перефразировать?',
     ];
     let responses = thoughtfulResponses;
@@ -510,7 +524,7 @@ async function generateCreativeResponse(
     
   // --- Start of Pipeline ---
 
-  // Stage 1: Input Cleaner
+  // Stage 1: Input Cleaner & Lemmatizer
   const normalizedInput = cleanAndNormalizeInput(userInput);
   if (!normalizedInput) {
       return "Пожалуйста, скажи что-нибудь.";
