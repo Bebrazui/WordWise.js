@@ -11,9 +11,19 @@ import { Form, FormControl, FormField, FormItem } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Send, Bot, User, BrainCircuit } from "lucide-react";
+import { Send, Bot, User, BrainCircuit, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 type Message = {
   id: number;
@@ -35,6 +45,7 @@ const initialMessage: Message = {
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([initialMessage]);
   const [isLoading, setIsLoading] = useState(false);
+  const [experimental, setExperimental] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -54,17 +65,11 @@ export function Chat() {
   }, [messages]);
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
-    let experimental = false;
-    let userInput = values.message;
-
-    if(userInput.startsWith('/ex ')){
-      experimental = true;
-      userInput = userInput.substring(4);
-    }
+    const userInput = values.message;
 
     const userMessage: Message = {
       id: Date.now(),
-      text: values.message, // We show the full command in the chat
+      text: userInput,
       sender: "user",
     };
 
@@ -82,13 +87,15 @@ export function Chat() {
 
     try {
       const history = newMessages
-        .filter(m => m.id !== initialMessage.id) 
-        .slice(-4, -1) 
-        .map(m => m.text);
+        .filter((m) => m.id !== initialMessage.id)
+        .slice(-4, -1)
+        .map((m) => m.text);
 
-      await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 500));
-      
-      const response = await contextualResponse({ 
+      await new Promise(
+        (resolve) => setTimeout(resolve, 500 + Math.random() * 500)
+      );
+
+      const response = await contextualResponse({
         userInput: userInput,
         history,
         experimental,
@@ -105,7 +112,8 @@ export function Chat() {
       toast({
         variant: "destructive",
         title: "Ой, что-то пошло не так.",
-        description: "Возникла проблема с получением ответа. Пожалуйста, попробуйте еще раз.",
+        description:
+          "Возникла проблема с получением ответа. Пожалуйста, попробуйте еще раз.",
       });
       setMessages((prev) => prev.filter((m) => !m.isTyping));
     } finally {
@@ -116,16 +124,49 @@ export function Chat() {
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
       <header className="flex items-center justify-between p-4 border-b shadow-sm bg-card shrink-0">
-        <h1 className="text-xl font-bold text-card-foreground">WordWise Chat</h1>
+        <h1 className="text-xl font-bold text-card-foreground">
+          WordWise Chat
+        </h1>
         <div className="flex items-center gap-2">
-            <Button
-                variant={'secondary'}
-                size="sm"
-                className="gap-2 pointer-events-none"
-            >
-                <BrainCircuit className="h-4 w-4"/>
-                Bot Q 0.2 (Quantum)
-            </Button>
+          <Button
+            variant={"secondary"}
+            size="sm"
+            className="gap-2 pointer-events-none"
+          >
+            <BrainCircuit className="h-4 w-4" />
+            {experimental ? "Bot Q 0.3 (TensorFlow.js)" : "Bot Q 0.2 (Quantum)"}
+          </Button>
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <Settings className="h-5 w-5" />
+                <span className="sr-only">Настройки</span>
+              </Button>
+            </SheetTrigger>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Настройки</SheetTitle>
+                <SheetDescription>
+                  Здесь вы можете управлять поведением чат-бота.
+                </SheetDescription>
+              </SheetHeader>
+              <div className="grid gap-4 py-4">
+                <div className="flex items-center justify-between space-x-2 p-2 rounded-lg border">
+                  <Label htmlFor="experimental-mode" className="flex flex-col space-y-1">
+                    <span>Экспериментальный режим</span>
+                    <span className="font-normal leading-snug text-muted-foreground">
+                      Использовать легковесную TF.js модель для более быстрых, но менее подробных ответов.
+                    </span>
+                  </Label>
+                  <Switch
+                    id="experimental-mode"
+                    checked={experimental}
+                    onCheckedChange={setExperimental}
+                  />
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
       </header>
       <main className="flex-1 overflow-hidden">
