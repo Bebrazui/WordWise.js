@@ -9,6 +9,7 @@
 
 import {z} from 'zod';
 import knowledgeBase from '@/data/knowledge-base.json';
+import synonyms from '@/data/synonyms.json';
 
 const ContextualResponseInputSchema = z.object({
   userInput: z
@@ -35,11 +36,38 @@ type KnowledgeBase = {
   };
 };
 
+type Synonyms = {
+  [key: string]: string[];
+};
+
 const defaultResponses = (knowledgeBase as KnowledgeBase)['неизвестная_фраза'].ответы;
 
 /**
+ * Replaces words in a sentence with their synonyms to make it more dynamic.
+ * @param sentence The sentence to process.
+ * @returns A sentence with some words replaced by synonyms.
+ */
+function synonymize(sentence: string): string {
+  const words = sentence.split(/(\s+|,|\.|\?|!)/);
+  const newWords = words.map(word => {
+    const lowerWord = word.toLowerCase();
+    const synonymList = (synonyms as Synonyms)[lowerWord];
+    if (synonymList && Math.random() > 0.5) { // 50% chance to replace
+      const randomSynonym = synonymList[Math.floor(Math.random() * synonymList.length)];
+      // Preserve capitalization
+      if (word[0] === word[0].toUpperCase()) {
+        return randomSynonym.charAt(0).toUpperCase() + randomSynonym.slice(1);
+      }
+      return randomSynonym;
+    }
+    return word;
+  });
+  return newWords.join('');
+}
+
+/**
  * This function uses keyword matching to generate a response from a structured knowledge base.
- * It finds a matching intent and returns a random response from that intent's list of answers.
+ * It finds a matching intent and returns a random, synonymized response from that intent's list of answers.
  * @param userInput The user's message.
  * @returns A response string.
  */
@@ -59,13 +87,15 @@ function generateResponse(userInput: string): string {
       const responses = intentData.ответы;
       // Return a random response from the list
       const randomIndex = Math.floor(Math.random() * responses.length);
-      return responses[randomIndex];
+      const chosenResponse = responses[randomIndex];
+      return synonymize(chosenResponse);
     }
   }
 
   // If no intent was matched, return a random default response
   const randomIndex = Math.floor(Math.random() * defaultResponses.length);
-  return defaultResponses[randomIndex];
+  const chosenResponse = defaultResponses[randomIndex];
+  return synonymize(chosenResponse);
 }
 
 // --- End of the bot's "brain" ---
@@ -77,3 +107,5 @@ export async function contextualResponse(
 
   return {aiResponse};
 }
+
+    
