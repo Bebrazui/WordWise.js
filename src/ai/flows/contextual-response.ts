@@ -139,6 +139,53 @@ const intentRouterFlow = ai.defineFlow(
     }
 );
 
+// --- (NEW) Generative AI Flow ---
+
+const GenerativeInputSchema = z.object({
+    userInput: z.string(),
+    history: z.array(z.string()).optional(),
+    normalizedInput: z.string(),
+    matchedIntent: z.string().optional(),
+    connectionResponse: z.string().optional(),
+    fallbackAnalysis: z.string().optional(),
+});
+
+const generativeResponsePrompt = ai.definePrompt({
+    name: 'generativeResponsePrompt',
+    input: { schema: GenerativeInputSchema },
+    output: { schema: ContextualResponseOutputSchema },
+    prompt: `You are a friendly and intelligent conversational AI assistant named WordWise. Your goal is to provide helpful, natural-sounding responses in Russian.
+
+    Current User Input: "{{userInput}}"
+    Conversation History (most recent first):
+    {{#each history}}
+    - {{this}}
+    {{/each}}
+
+    Here is some context my internal algorithms have prepared for you:
+    - Normalized User Input: "{{normalizedInput}}"
+    {{#if matchedIntent}}
+    - My best guess for the user's intent is: "{{matchedIntent}}".
+    {{/if}}
+    {{#if connectionResponse}}
+    - I found this interesting connection: "{{connectionResponse}}".
+    {{/if}}
+    {{#if fallbackAnalysis}}
+    - I couldn't find a direct match. My analysis suggests: "{{fallbackAnalysis}}".
+    {{/if}}
+
+    Based on all of this information, please formulate a single, coherent, and helpful response to the user. Do not act as a router or mention the internal algorithms. Just respond naturally as WordWise.`,
+});
+
+const generativeResponseFlow = ai.defineFlow({
+    name: 'generativeResponseFlow',
+    inputSchema: GenerativeInputSchema,
+    outputSchema: ContextualResponseOutputSchema
+}, async (input) => {
+    const { output } = await generativeResponsePrompt(input);
+    return output!;
+});
+
 
 // --- Pipeline Stage 1: Input Cleaner & Lemmatizer ---
 function lemmatize(word: string): string {
@@ -382,54 +429,6 @@ function generateConnectionResponse(normalizedInput: string): string | null {
     return null;
 }
 
-// --- (Experimental) Pipeline Stage 6.5: Telegraphic Generator ---
-function generateTelegraphicResponse(normalizedInput: string): string | null {
-    const words = [...new Set(normalizedInput.split(/\s+/).filter(w => w.length > 2))];
-    if (words.length === 0) return null;
-    const keyConcepts: { word: string; connection: WordConnection | null }[] = [];
-    for (const word of words) {
-        if (wc[word]) {
-            const bestConnection = [...wc[word]].sort((a, b) => b.weight - a.weight)[0];
-            keyConcepts.push({ word, connection: bestConnection });
-        }
-    }
-    
-    if (keyConcepts.length > 0) {
-      keyConcepts.sort((a, b) => (b.connection?.weight ?? 0) - (a.connection?.weight ?? 0));
-      let response = '';
-      const mainConcept = keyConcepts[0];
-      response += `${mainConcept.word.charAt(0).toUpperCase() + mainConcept.word.slice(1)}`;
-      if (mainConcept.connection) {
-          const conn = mainConcept.connection;
-          const connValue = Array.isArray(conn.value) ? conn.value.join(', ') : conn.value;
-          switch (conn.type) {
-              case 'is_a': response += ` - это ${connValue}.`; break;
-              case 'can_do': response += ` может ${connValue}.`; break;
-              case 'related_to': response += `. Связано с: ${connValue}.`; break;
-              default: response += `: ${connValue}.`;
-          }
-      }
-      if (keyConcepts.length > 1) {
-          const secondConcept = keyConcepts[1];
-          if (secondConcept.connection) {
-              response += ` Также: ${secondConcept.word} - ${secondConcept.connection.value}.`;
-          }
-      }
-      return response.trim();
-    }
-
-    // Fallback to knowledge base if telegraphic response is not possible
-    const bestMatch = findBestIntentMatch(normalizedInput);
-    if (bestMatch && bestMatch.score > 0.6) {
-        let responses = kb[bestMatch.intent].responses;
-        const response = responses[Math.floor(Math.random() * responses.length)];
-        return response; // No synonymize in experimental
-    }
-
-    return getFallbackResponse(normalizedInput);
-}
-
-
 // --- Pipeline Stage 7: Observer & Smart Fallback ---
 function getFallbackResponse(normalizedInput: string): string {
     const wordsInInput = normalizedInput.split(/\s+/).filter(w => w);
@@ -496,6 +495,27 @@ async function generateConversationalResponse(
   if (!normalizedInput) {
       return "Пожалуйста, скажи что-нибудь.";
   }
+
+  // --- New Generative AI Path (if experimental mode is on) ---
+  if (experimental) {
+      const bestMatch = findBestIntentMatch(normalizedInput);
+      const connectionResponse = generateConnectionResponse(normalizedInput);
+      const fallbackResponse = getFallbackResponse(normalizedInput);
+      
+      const generativeInput: z.infer<typeof GenerativeInputSchema> = {
+          userInput,
+          history,
+          normalizedInput,
+          matchedIntent: bestMatch?.intent,
+          connectionResponse: connectionResponse ?? undefined,
+          fallbackAnalysis: !bestMatch && !connectionResponse ? fallbackResponse : undefined,
+      };
+
+      const result = await generativeResponseFlow(generativeInput);
+      return result.aiResponse;
+  }
+
+  // --- Original Logic Path ---
   const definition = checkForDefinition(userInput);
   if (definition && sessionMemory.lastUnknownWord) {
     const learnedWord = sessionMemory.lastUnknownWord;
@@ -515,10 +535,6 @@ async function generateConversationalResponse(
       return synonymize(wellbeingResponse);
   }
   
-  if (experimental) {
-      return generateTelegraphicResponse(normalizedInput) ?? getFallbackResponse(normalizedInput);
-  }
-
   const bestMatch = findBestIntentMatch(normalizedInput);
   if (bestMatch && bestMatch.score > 0.6) {
     let responses = kb[bestMatch.intent].responses;
@@ -552,12 +568,6 @@ async function generateConversationalResponse(
 export async function contextualResponse(
   input: ContextualResponseInput
 ): Promise<ContextualResponseOutput> {
-  // Handle experimental mode triggered by settings toggle
-  if (input.userInput.startsWith("/ex ")) {
-    input.experimental = true;
-    input.userInput = input.userInput.substring(4);
-  }
-
   const { intent } = await intentRouterFlow({ userInput: input.userInput });
 
   let aiResponse: string;
