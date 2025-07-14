@@ -6,7 +6,7 @@ import { WordWiseModel, ImageWiseModel, serializeModel, BaseModel, VocabData } f
 import { SGD } from '@/lib/optimizer';
 import { crossEntropyLossWithSoftmaxGrad } from '@/lib/layers';
 import { buildTextVocabulary, wordsToInputTensors, wordsToTargetTensors, createTextBatches } from '@/utils/tokenizer';
-import { buildImageVocabulary, createImageBatches, imageToTensor } from '@/utils/image-processor';
+import { buildImageVocabulary, createImageBatches } from '@/utils/image-processor';
 import { Tensor } from '@/lib/tensor';
 
 let model: BaseModel | null = null;
@@ -73,21 +73,17 @@ async function initialize(payload: any) {
       } 
     });
   } else if (payload.type === 'image') {
-    const { items, imageSize } = payload;
+    const { items, imageSize } = payload; // `items` now contains { pixelData, shape, label }
     vocabData = buildImageVocabulary(items.map((item: any) => item.label));
     model = new ImageWiseModel(vocabData.numClasses, imageSize, imageSize, 3); // Assuming 3 channels (RGB)
     
-    const imageTensors: Tensor[] = [];
-    for (const item of items) {
-        const tensor = await imageToTensor(item.dataUrl, imageSize, imageSize);
-        imageTensors.push(tensor);
-    }
+    const imageTensors = items.map((item: any) => new Tensor(item.pixelData, item.shape));
 
     const targetTensors = items.map((item: any) => {
-        const index = vocabData!.labelToIndex.get(item.label)!;
-        const oneHot = new Float32Array(vocabData!.numClasses).fill(0);
+        const index = (vocabData as { labelToIndex: Map<string, number> }).labelToIndex.get(item.label)!;
+        const oneHot = new Float32Array((vocabData as { numClasses: number }).numClasses).fill(0);
         oneHot[index] = 1;
-        return new Tensor(oneHot, [1, vocabData!.numClasses]);
+        return new Tensor(oneHot, [1, (vocabData as { numClasses: number }).numClasses]);
     });
 
     trainingData = {
@@ -139,18 +135,17 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
     for (const batch of batches) {
       let predictionLogits;
       if (model.type === 'text') {
-        // Stateful LSTM: carry state through the sequence (not implemented here for simplicity)
-        // For now, reset state per batch.
         let {h0: h, c0: c} = (model as WordWiseModel).initializeStates(batch.inputs.shape[0]);
-        // Note: A true RNN would loop over a sequence within the batch.
-        // Our current setup treats each word in the batch as a separate sequence of 1.
         predictionLogits = model.forward(batch.inputs, h, c).outputLogits;
       } else { // image model
         predictionLogits = (model as ImageWiseModel).forward(batch.inputs).outputLogits;
       }
       
       const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batch.targets);
-      epochLoss += lossTensor.data[0];
+      // Ensure loss is a single number before adding
+      if(lossTensor.data.length === 1) {
+        epochLoss += lossTensor.data[0];
+      }
       
       lossTensor.backward();
       optimizer.step(model.getParameters());

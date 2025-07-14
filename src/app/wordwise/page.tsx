@@ -8,6 +8,7 @@ import { Info, Upload, Download, Settings, TestTube2, CheckCircle, ImagePlus, Fi
 
 import { serializeModel, deserializeModel, WordWiseModel, ImageWiseModel, BaseModel, VocabData } from '../../lib/model';
 import { getWordFromPrediction } from '../../utils/tokenizer';
+import { imageToTensor } from '../../utils/image-processor';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -38,12 +39,18 @@ const defaultCorpus = `вопрос: привет ответ: привет ка�
 вопрос: у тебя есть хобби ответ: да я люблю программировать и создавать новое
 вопрос: добрый день ответ: и вам добрый день`;
 
+type TrainingImageItem = {
+    file: File;
+    previewUrl: string;
+    label: string;
+};
+
 type TrainingDataType = {
   type: 'text';
   corpus: string;
 } | {
   type: 'image';
-  items: { dataUrl: string; label: string }[];
+  items: TrainingImageItem[];
 };
 
 
@@ -134,6 +141,7 @@ export default function WordwisePage() {
             break;
         case 'error':
           setStatus(`Ошибка в Worker: ${payload.message}`);
+          console.error("Worker Error:", payload.message);
           setIsTraining(false);
           break;
       }
@@ -145,34 +153,59 @@ export default function WordwisePage() {
   }, [setTrainedModel, toast]);
 
 
-  const initializeWordWise = useCallback(() => {
+  const initializeWordWise = useCallback(async () => {
     setStatus('Инициализация...');
-    let payload: any;
     if (trainingData.type === 'text') {
-        payload = {
-            type: 'text',
-            textCorpus: trainingData.corpus,
-            embeddingDim,
-            hiddenSize,
-            learningRate
-        };
+        workerRef.current?.postMessage({
+            type: 'initialize',
+            payload: {
+                type: 'text',
+                textCorpus: trainingData.corpus,
+                embeddingDim,
+                hiddenSize,
+                learningRate
+            }
+        });
     } else if (trainingData.type === 'image') {
         if(trainingData.items.length < 2) {
             toast({ title: "Ошибка", description: "Для обучения нужно как минимум 2 изображения.", variant: "destructive" });
             return;
         }
-        payload = {
-            type: 'image',
-            items: trainingData.items,
-            imageSize,
-            learningRate
-        };
-    }
+        setStatus('Обработка изображений...');
+        
+        try {
+            const processedItems = await Promise.all(
+                trainingData.items.map(async (item) => {
+                    // This function now returns the raw pixel data and shape
+                    const { pixelData, shape } = await imageToTensor(URL.createObjectURL(item.file), imageSize, imageSize);
+                    return {
+                        pixelData, // Float32Array
+                        shape,     // [channels, height, width]
+                        label: item.label
+                    };
+                })
+            );
 
-    workerRef.current?.postMessage({
-        type: 'initialize',
-        payload
-    });
+            // Transferable objects for efficiency
+            const transferables = processedItems.map(item => item.pixelData.buffer);
+
+            setStatus('Инициализация модели в Worker...');
+            workerRef.current?.postMessage({
+                type: 'initialize',
+                payload: {
+                    type: 'image',
+                    items: processedItems, // Send processed data
+                    imageSize,
+                    learningRate
+                }
+            }, transferables);
+
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка обработки изображений.";
+            setStatus(`Ошибка: ${errorMessage}`);
+            toast({ title: "Ошибка", description: errorMessage, variant: "destructive" });
+        }
+    }
   }, [trainingData, embeddingDim, hiddenSize, learningRate, imageSize, toast]);
   
   const stopTraining = () => {
@@ -274,30 +307,29 @@ export default function WordwisePage() {
     const files = event.target.files;
     if (!files) return;
 
-    const newImageItems: { dataUrl: string; label: string }[] = [];
-    const filesArray = Array.from(files);
+    const newImageItems: TrainingImageItem[] = Array.from(files).map(file => ({
+        file,
+        previewUrl: URL.createObjectURL(file),
+        label: file.name.split('.').slice(0, -1).join('.') || 'untitled'
+    }));
 
-    filesArray.forEach(file => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            newImageItems.push({
-                dataUrl: e.target?.result as string,
-                label: file.name.split('.')[0] || 'unknown'
-            });
-            if (newImageItems.length === filesArray.length) {
-                // Keep existing items and add new ones
-                 setTrainingData(prev => {
-                    if (prev.type === 'image') {
-                        return { type: 'image', items: [...prev.items, ...newImageItems] };
-                    }
-                    return { type: 'image', items: newImageItems };
-                });
-            }
-        };
-        reader.readAsDataURL(file);
+    setTrainingData(prev => {
+        if (prev.type === 'image') {
+            return { type: 'image', items: [...prev.items, ...newImageItems] };
+        }
+        return { type: 'image', items: newImageItems };
     });
-     event.target.value = '';
+     
+    event.target.value = '';
   }
+
+  const handleLabelChange = (index: number, newLabel: string) => {
+    if (trainingData.type !== 'image') return;
+
+    const updatedItems = [...trainingData.items];
+    updatedItems[index].label = newLabel;
+    setTrainingData({ type: 'image', items: updatedItems });
+  };
 
 
   const handleSaveModel = () => {
@@ -336,13 +368,12 @@ export default function WordwisePage() {
         modelRef.current = loaded.model;
         vocabDataRef.current = loaded.vocabData;
         
-        if (loaded.model.type === 'text') {
+        if (loaded.model.type === 'text' && 'vocab' in loaded.vocabData) {
             setTrainingData({type: 'text', corpus: 'Загружена текстовая модель. Корпус не восстанавливается.'});
             const textModel = loaded.model as WordWiseModel;
-            const textVocab = loaded.vocabData as { vocab: string[] };
             setEmbeddingDim(textModel.embeddingDim);
             setHiddenSize(textModel.hiddenSize);
-            const wordsForSampling = textVocab.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
+            const wordsForSampling = loaded.vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
             const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
             setSampleWords(shuffled.slice(0, 4));
         } else if (loaded.model.type === 'image') {
@@ -432,16 +463,20 @@ export default function WordwisePage() {
                             <p className="text-xs text-gray-500 mt-2">Загрузите изображения для обучения</p>
                         </div>
                          {trainingData.type === 'image' && trainingData.items.length > 0 && (
-                            <div className="mt-4">
+                            <div className="mt-4 space-y-3 max-h-64 overflow-y-auto">
                                 <p className="text-sm font-medium">Загружено {trainingData.items.length} изображений:</p>
-                                <div className="grid grid-cols-3 gap-2 mt-2 max-h-48 overflow-y-auto">
-                                    {trainingData.items.map((item, index) => (
-                                        <div key={index} className="relative group">
-                                            <img src={item.dataUrl} alt={item.label} className="rounded-md object-cover aspect-square" />
-                                            <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs text-center p-0.5 truncate">{item.label}</div>
-                                        </div>
-                                    ))}
-                                </div>
+                                {trainingData.items.map((item, index) => (
+                                    <div key={index} className="flex items-center gap-3 p-2 border rounded-md">
+                                        <img src={item.previewUrl} alt={item.label} className="w-12 h-12 rounded-md object-cover" />
+                                        <Input
+                                            type="text"
+                                            value={item.label}
+                                            onChange={(e) => handleLabelChange(index, e.target.value)}
+                                            className="flex-grow"
+                                            disabled={isTraining || isInitialized}
+                                        />
+                                    </div>
+                                ))}
                             </div>
                          )}
                     </TabsContent>
@@ -593,7 +628,7 @@ export default function WordwisePage() {
                     <CardTitle>График потерь (Loss)</CardTitle>
                     <CardDescription>
                         Этот график показывает, как "ошибка" модели уменьшается в процессе обучения.
-                        Чем ниже значение, тем точнее модель предсказывает следующее слово.
+                        Чем ниже значение, тем точнее модель предсказывает следующее слово или классифицирует изображение.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="h-[400px] pr-8">

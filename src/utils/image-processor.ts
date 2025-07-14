@@ -1,3 +1,4 @@
+
 // src/utils/image-processor.ts
 import { Tensor } from '../lib/tensor';
 
@@ -14,23 +15,23 @@ export function buildImageVocabulary(labels: string[]): { labels: string[]; labe
 }
 
 /**
- * Converts a data URL of an image into a Tensor.
- * Resizes the image and normalizes pixel values.
- * @param dataUrl The data URL of the image.
+ * Converts an image from a URL into raw pixel data array.
+ * This must be run in the main thread, not a worker.
+ * @param imageUrl The URL of the image (can be a blob URL).
  * @param width The target width.
  * @param height The target height.
- * @returns A promise that resolves to a Tensor of shape [1, channels, height, width].
+ * @returns A promise that resolves to an object with pixel data and shape.
  */
-export function imageToTensor(dataUrl: string, width: number, height: number): Promise<Tensor> {
+export function imageToTensor(imageUrl: string, width: number, height: number): Promise<{ pixelData: Float32Array, shape: number[] }> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.src = dataUrl;
+    img.src = imageUrl;
     img.crossOrigin = 'Anonymous';
     img.onload = () => {
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) {
         return reject(new Error('Could not get canvas context'));
       }
@@ -52,8 +53,7 @@ export function imageToTensor(dataUrl: string, width: number, height: number): P
         }
       }
 
-      // The batch dimension is added when creating batches.
-      resolve(new Tensor(tensorData, [numChannels, height, width]));
+      resolve({ pixelData: tensorData, shape: [numChannels, height, width] });
     };
     img.onerror = (err) => {
       reject(new Error('Failed to load image: ' + err));
