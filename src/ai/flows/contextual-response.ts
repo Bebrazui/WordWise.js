@@ -72,14 +72,24 @@ function calculateExpression(expression: string): number | null {
     // which is executed in a closed scope. It's safe as long as the
     // expression only contains numbers and basic math operators.
     // We validate the expression with a regex to ensure safety.
-    const sanitizedExpression = expression.replace(/[^-()\d/*+.]/g, '');
-    if (sanitizedExpression !== expression) {
-      // Invalid characters were found
+    const sanitizedExpression = expression.replace(/[^-()\d/*+.]/g, ' ').trim();
+    if (!sanitizedExpression) {
       return null;
     }
+    
+    // Check for invalid characters that weren't just whitespace
+    if (/[^-()\d/*+.\s]/.test(expression)) {
+        // if there are other characters than math and spaces, it's not a pure expression
+    }
+
+    // To be safe, ensure the sanitized expression is valid before executing
+    // This regex checks for a valid structure, preventing things like `2+` or `*3`
+    const validMathRegex = /^(?:-?\d+(?:\.\d+)?(?:[+\-*/]\s?-?\s?\d+(?:\.\d+)?)*?)$/;
+    // A more complex one to handle parentheses is tricky. For now, let's keep it simple
+    // and let the Function constructor handle errors.
 
     // eslint-disable-next-line no-new-func
-    const result = new Function(`return ${expression}`)();
+    const result = new Function(`return ${sanitizedExpression}`)();
 
     if (typeof result !== 'number' || !isFinite(result)) {
       return null;
@@ -124,18 +134,26 @@ function synonymize(sentence: string): string {
  */
 function generateRigidResponse(userInput: string, history: string[] = []): string {
     // 1. Check for a mathematical expression first.
-    const mathRegex = /^[0-9\s\+\-\*\/\(\)\.]+$/;
-    if (mathRegex.test(userInput.trim())) {
-      const result = calculateExpression(userInput);
-      if (result !== null) {
-        return `Результат: ${result}`;
-      }
+    // This regex extracts potential math expressions from the text.
+    const mathExpressionRegex = /((?:\d+\s*[+\-*/]\s*)+\d+)/g;
+    const potentialExpression = userInput.match(mathExpressionRegex)?.[0];
+
+    if (potentialExpression) {
+        const result = calculateExpression(potentialExpression);
+        if (result !== null) {
+            return `Результат: ${result}`;
+        }
     }
 
     const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
     const wordsInInput = new Set(lowerCaseInput.split(/\s+/).filter(w => w));
 
     let bestMatch: { intent: string; score: number } | null = null;
+
+    // Use the latest user input first for matching
+    const textToAnalyze = [userInput, ...history].join(' ');
+    const lowerCaseText = textToAnalyze.toLowerCase().replace(/[.,!?]/g, '');
+    const wordsInText = new Set(lowerCaseText.split(/\s+/).filter(w => w));
 
     // Calculate best match from knowledge base using Jaccard similarity on the LATEST user input first
     for (const intent in kb) {
