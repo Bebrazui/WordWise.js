@@ -58,6 +58,10 @@ const wc = wordConnections as WordConnections;
 
 const defaultResponses = kb['неизвестная_фраза'].ответы;
 
+// --- State for avoiding repetition ---
+const lastResponseMap = new Map<string, string>();
+
+
 // --- Bot's "Brain" ---
 
 /**
@@ -68,10 +72,6 @@ const defaultResponses = kb['неизвестная_фраза'].ответы;
  */
 function calculateExpression(expression: string): number | null {
   try {
-    // This is a safer alternative to eval(). It creates a new Function
-    // which is executed in a closed scope. It's safe as long as the
-    // expression only contains numbers and basic math operators.
-    // We validate the expression with a regex to ensure safety.
     const sanitizedExpression = expression.replace(/[^-()\d/*+.]/g, ' ').trim();
     if (!sanitizedExpression) {
       return null;
@@ -81,12 +81,6 @@ function calculateExpression(expression: string): number | null {
     if (/[^-()\d/*+.\s]/.test(expression)) {
         // if there are other characters than math and spaces, it's not a pure expression
     }
-
-    // To be safe, ensure the sanitized expression is valid before executing
-    // This regex checks for a valid structure, preventing things like `2+` or `*3`
-    const validMathRegex = /^(?:-?\d+(?:\.\d+)?(?:[+\-*/]\s?-?\s?\d+(?:\.\d+)?)*?)$/;
-    // A more complex one to handle parentheses is tricky. For now, let's keep it simple
-    // and let the Function constructor handle errors.
 
     // eslint-disable-next-line no-new-func
     const result = new Function(`return ${sanitizedExpression}`)();
@@ -103,6 +97,7 @@ function calculateExpression(expression: string): number | null {
 
 /**
  * Replaces words in a sentence with their synonyms to make it more dynamic.
+ * Increased chance to synonymize.
  * @param sentence The sentence to process.
  * @returns A sentence with some words replaced by synonyms.
  */
@@ -111,7 +106,7 @@ function synonymize(sentence: string): string {
   const newWords = words.map(word => {
     const lowerWord = word.toLowerCase();
     const synonymList = syn[lowerWord];
-    if (synonymList && Math.random() > 0.5) { // 50% chance to replace
+    if (synonymList && Math.random() < 0.75) { // 75% chance to replace
       const randomSynonym =
         synonymList[Math.floor(Math.random() * synonymList.length)];
       // Preserve capitalization
@@ -133,8 +128,6 @@ function synonymize(sentence: string): string {
  * @returns A response string.
  */
 function generateRigidResponse(userInput: string, history: string[] = []): string {
-    // 1. Check for a mathematical expression first.
-    // This regex extracts potential math expressions from the text.
     const mathExpressionRegex = /((?:\d|\.)+\s*[+\-*/]\s*(?:\d|\.)+)/g;
     const potentialExpression = userInput.match(mathExpressionRegex)?.[0];
 
@@ -150,7 +143,6 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
 
     let bestMatch: { intent: string; score: number } | null = null;
     
-    // Combine history with current input for context, but prioritize current input for matching.
     const textToAnalyze = [userInput, ...history].join(' ');
     const lowerCaseText = textToAnalyze.toLowerCase().replace(/[.,!?]/g, '');
     const wordsInText = new Set(lowerCaseText.split(/\s+/).filter(w => w));
@@ -167,7 +159,6 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
             const lowerPhrase = phrase.toLowerCase();
             const phraseWords = new Set(lowerPhrase.split(/\s+/).filter(Boolean));
             
-            // Check for partial matches (e.g., "привет" in "приветик")
             const intersection = new Set([...phraseWords].filter(x => {
                 for (const inputWord of wordsInInput) {
                     if (inputWord.includes(x) || x.includes(inputWord)) {
@@ -178,14 +169,13 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
             }));
 
             const union = new Set([...phraseWords, ...wordsInInput]);
-            const score = union.size > 0 ? intersection.size / union.size : 0; // Jaccard similarity
+            const score = union.size > 0 ? intersection.size / union.size : 0;
             
             if (score > highestScoreForIntent) {
                 highestScoreForIntent = score;
             }
         }
         
-        // Boost score if the intent is more relevant to the whole conversation context
         const contextIntersection = new Set([...wordsInText].filter(x => {
              for (const phrase of intentData.фразы) {
                 if(phrase.toLowerCase().includes(x)) return true;
@@ -204,10 +194,16 @@ function generateRigidResponse(userInput: string, history: string[] = []): strin
 
 
     // Decide if the match is good enough
-    if (bestMatch && bestMatch.score > 0.1) { // Threshold can be adjusted
-        const responses = kb[bestMatch.intent].ответы;
-        const randomIndex = Math.floor(Math.random() * responses.length);
-        return synonymize(responses[randomIndex]);
+    if (bestMatch && bestMatch.score > 0.1) {
+        let responses = kb[bestMatch.intent].ответы;
+        // Avoid repeating the last response for this intent
+        const lastResponse = lastResponseMap.get(bestMatch.intent);
+        if (lastResponse && responses.length > 1) {
+            responses = responses.filter(r => r !== lastResponse);
+        }
+        const response = responses[Math.floor(Math.random() * responses.length)];
+        lastResponseMap.set(bestMatch.intent, response);
+        return synonymize(response);
     }
 
     // Fallback to default response if no good match is found
@@ -228,26 +224,23 @@ function levenshteinDistance(a: string, b: string): number {
 
   const matrix = [];
 
-  // increment along the first column of each row
   for (let i = 0; i <= b.length; i++) {
     matrix[i] = [i];
   }
 
-  // increment each column in the first row
   for (let j = 0; j <= a.length; j++) {
     matrix[0][j] = j;
   }
 
-  // Fill in the rest of the matrix
   for (let i = 1; i <= b.length; i++) {
     for (let j = 1; j <= a.length; j++) {
       if (b.charAt(i - 1) === a.charAt(j - 1)) {
         matrix[i][j] = matrix[i - 1][j - 1];
       } else {
         matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1, // substitution
-          matrix[i][j - 1] + 1,     // insertion
-          matrix[i - 1][j] + 1      // deletion
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
         );
       }
     }
@@ -281,8 +274,6 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
       
       for(const inputWord of wordsInInput) {
         for(const phraseWord of phraseWords) {
-            // Allow for a small number of typos (Levenshtein distance)
-            // The threshold can be adjusted. e.g. 1 for short words, 2 for longer.
             const distance = levenshteinDistance(inputWord, phraseWord);
             const threshold = phraseWord.length > 4 ? 2 : 1;
             if (distance <= threshold) {
@@ -299,9 +290,14 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
 
   // If a reasonably good match is found, use it. This makes the bot feel responsive to direct questions.
   if (bestMatch && bestMatch.score > 0) {
-    const responses = kb[bestMatch.intent].ответы;
-    const randomIndex = Math.floor(Math.random() * responses.length);
-    return synonymize(responses[randomIndex]);
+    let responses = kb[bestMatch.intent].ответы;
+    const lastResponse = lastResponseMap.get(bestMatch.intent);
+    if (lastResponse && responses.length > 1) {
+        responses = responses.filter(r => r !== lastResponse);
+    }
+    const response = responses[Math.floor(Math.random() * responses.length)];
+    lastResponseMap.set(bestMatch.intent, response);
+    return synonymize(response);
   }
 
   // 2. If no direct match, get creative with word connections.
@@ -311,7 +307,6 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
   }
 
   // 3. Fallback to a more creative, thoughtful default response.
-  // This avoids the "I don't know" trap.
   const thoughtfulResponses = [
     "Это интересный поворот. Дай мне секунду, чтобы обдумать это.",
     "Хм, ты затронул любопытную тему. Я пытаюсь найти связи...",
@@ -336,7 +331,6 @@ function generateConnectionResponse(userInput: string): string | null {
   
   const foundFacts: { word: string, fact: string }[] = [];
 
-  // Get all synonyms to broaden the search
   const allWordsAndSynonyms = new Set(words);
   words.forEach(word => {
     if (syn[word]) {
@@ -344,7 +338,6 @@ function generateConnectionResponse(userInput: string): string | null {
     }
   });
 
-  // Find all possible connections for the words in the input
   for (const word of allWordsAndSynonyms) {
     for (const partOfSpeech in connections) {
       const wordsInPOS = connections[partOfSpeech as keyof typeof connections];
@@ -366,16 +359,15 @@ function generateConnectionResponse(userInput: string): string | null {
   }
 
   if (foundFacts.length === 0) {
-    return null; // No connections found
+    return null;
   }
 
   if (foundFacts.length === 1) {
-    return foundFacts[0].fact; // Only one fact, return it
+    return foundFacts[0].fact;
   }
   
-  // If multiple facts are found, try to combine them into a coherent sentence
   let combinedResponse = "Если я правильно тебя понимаю, ты говоришь о нескольких вещах. ";
-  const factStrings = foundFacts.map(f => f.fact.replace(/.$/, '')); // remove trailing period
+  const factStrings = foundFacts.map(f => f.fact.replace(/.$/, ''));
   combinedResponse += factStrings.join(' и ');
   combinedResponse += ". Это довольно интересное сочетание.";
 
