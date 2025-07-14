@@ -10,7 +10,6 @@
 import {z} from 'zod';
 import knowledgeBase from '@/data/knowledge-base.json';
 
-
 const ContextualResponseInputSchema = z.object({
   userInput: z
     .string()
@@ -29,25 +28,44 @@ export type ContextualResponseOutput = z.infer<
 
 // --- Start of the bot's "brain" ---
 
-// A default response if no keyword is found.
-const defaultResponse = 'Интересная мысль. Я не совсем понимаю.';
+type KnowledgeBase = {
+  [intent: string]: {
+    фразы: string[];
+    ответы: string[];
+  };
+};
+
+const defaultResponses = (knowledgeBase as KnowledgeBase)['неизвестная_фраза'].ответы;
 
 /**
- * This function uses simple keyword matching to generate a response.
+ * This function uses keyword matching to generate a response from a structured knowledge base.
+ * It finds a matching intent and returns a random response from that intent's list of answers.
  * @param userInput The user's message.
  * @returns A response string.
  */
 function generateResponse(userInput: string): string {
   const lowerCaseInput = userInput.toLowerCase();
   
-  // Find a keyword that is included in the user's input.
-  for (const keyword in knowledgeBase) {
-    if (lowerCaseInput.includes(keyword)) {
-      return (knowledgeBase as Record<string, string>)[keyword];
+  const intents = Object.keys(knowledgeBase) as Array<keyof typeof knowledgeBase>;
+
+  for (const intent of intents) {
+    // Skip the default case, we'll handle it last
+    if (intent === 'неизвестная_фраза') continue;
+
+    const intentData = (knowledgeBase as KnowledgeBase)[intent];
+    const foundPhrase = intentData.фразы.find(phrase => lowerCaseInput.includes(phrase.toLowerCase()));
+
+    if (foundPhrase) {
+      const responses = intentData.ответы;
+      // Return a random response from the list
+      const randomIndex = Math.floor(Math.random() * responses.length);
+      return responses[randomIndex];
     }
   }
 
-  return defaultResponse;
+  // If no intent was matched, return a random default response
+  const randomIndex = Math.floor(Math.random() * defaultResponses.length);
+  return defaultResponses[randomIndex];
 }
 
 // --- End of the bot's "brain" ---
