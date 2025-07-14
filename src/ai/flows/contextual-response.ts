@@ -93,14 +93,20 @@ function synonymize(sentence: string): string {
  */
 function generateRigidResponse(userInput: string, history: string[] = []): string {
   const fullInput = [...history, userInput].join(' ').toLowerCase().replace(/[.,!?]/g, '');
+  const inputWords = new Set(fullInput.split(/\s+/).filter(w => w.length > 1));
 
   for (const intent in kb) {
     if (Object.prototype.hasOwnProperty.call(kb, intent)) {
       const intentData = kb[intent];
-      if (intentData.фразы.some(phrase => fullInput.includes(phrase.toLowerCase()))) {
-        const responses = intentData.ответы;
-        const randomIndex = Math.floor(Math.random() * responses.length);
-        return synonymize(responses[randomIndex]);
+      for (const phrase of intentData.фразы) {
+        const phraseWords = new Set(phrase.toLowerCase().split(/\s+/));
+        const intersection = new Set([...phraseWords].filter(x => inputWords.has(x)));
+        // If any word from the knowledge base phrase is in the user input, we have a match.
+        if (intersection.size > 0) {
+           const responses = intentData.ответы;
+           const randomIndex = Math.floor(Math.random() * responses.length);
+           return synonymize(responses[randomIndex]);
+        }
       }
     }
   }
@@ -133,12 +139,17 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
 
         for (const phrase of intentData.фразы) {
             const lowerPhrase = phrase.toLowerCase();
-            if (lowerPhrase === lowerCaseInput) {
-                highestScoreForIntent = 1; // Perfect match
-                break;
-            }
             const phraseWords = new Set(lowerPhrase.split(/\s+/));
-            const intersection = new Set([...phraseWords].filter(x => wordsInInput.has(x)));
+            const intersection = new Set([...phraseWords].filter(x => {
+                // Check for partial matches (e.g., "привет" in "приветик")
+                for (const inputWord of wordsInInput) {
+                    if (inputWord.includes(x) || x.includes(inputWord)) {
+                        return true;
+                    }
+                }
+                return false;
+            }));
+
             const union = new Set([...phraseWords, ...wordsInInput]);
             const score = union.size > 0 ? intersection.size / union.size : 0; // Jaccard similarity
             
@@ -153,7 +164,7 @@ function generateCreativeResponse(userInput: string, history: string[] = []): st
     }
 
     // 2. Decide if the match is good enough
-    if (bestMatch && bestMatch.score > 0.3) {
+    if (bestMatch && bestMatch.score > 0.1) {
         const responses = kb[bestMatch.intent].ответы;
         const randomIndex = Math.floor(Math.random() * responses.length);
         return synonymize(responses[randomIndex]);
@@ -208,7 +219,7 @@ function generateConnectionResponse(userInput: string): string | null {
     for (const partOfSpeech in connections) {
        const wordsInPOS = connections[partOfSpeech as keyof typeof connections];
        for (const mainWord in wordsInPOS) {
-        const properties = wordsInPOS[mainWord];
+        const properties = wordsInPOS[mainWord as keyof typeof wordsInPOS];
         for (const prop in properties) {
             const values = properties[prop as keyof typeof properties];
             if(Array.isArray(values) && values.includes(word)) {
