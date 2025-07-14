@@ -191,6 +191,14 @@ function generateRigidResponse(
     // Score based on direct match with user's last message
     for (const phrase of intentData.фразы) {
       const lowerPhrase = phrase.toLowerCase();
+      
+      if (lowerCaseInput.includes(lowerPhrase) && lowerPhrase.length > 0) {
+        const score = lowerPhrase.length / lowerCaseInput.length;
+        if (score > maxScoreForIntent) {
+            maxScoreForIntent = score;
+        }
+      }
+
       const phraseWords = new Set(lowerPhrase.split(/\s+/).filter(Boolean));
 
       const intersection = new Set(
@@ -224,7 +232,7 @@ function generateRigidResponse(
   }
 
   // Adjust threshold for better accuracy
-  if (bestMatch && bestMatch.score > 0.15) {
+  if (bestMatch && bestMatch.score > 0.4) {
     let responses = kb[bestMatch.intent].ответы;
     // Avoid repeating the last response for this intent
     const lastResponse = lastResponseMap.get(bestMatch.intent);
