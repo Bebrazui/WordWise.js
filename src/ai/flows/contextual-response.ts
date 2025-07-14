@@ -1,3 +1,4 @@
+
 'use server';
 /**
  * @fileOverview A contextual response AI bot based on a knowledge base, synonyms, and word connections.
@@ -61,6 +62,11 @@ type Synonyms = {
   [key: string]: string[];
 };
 
+type WordConnection = {
+    value: string | string[];
+    weight: number;
+}
+
 type WordConnections = {
   веса_частей_речи: {
     [partOfSpeech: string]: number;
@@ -68,7 +74,7 @@ type WordConnections = {
   словарь_связей: {
     [partOfSpeech: string]: {
       [word: string]: {
-        [relation: string]: string | string[];
+        [relation: string]: WordConnection;
       };
     };
   };
@@ -294,14 +300,14 @@ function findBestIntentMatch(normalizedInput: string): { intent: string; score: 
 // --- Pipeline Stage 6: Creative Connection Algorithm (The Quantum Generator) ---
 /**
  * Generates a response based on word connections if a direct intent is not found.
- * This simulates an "Attention Mechanism" by weighing words.
+ * This simulates an "Attention Mechanism" by weighing words and connection types.
  * @param normalizedInput The user's cleaned message.
  * @returns A generated response string or null if no connection is found.
  */
 function generateConnectionResponse(normalizedInput: string): string | null {
   const words = [...new Set(normalizedInput.split(/\s+/).filter(w => w.length > 2))]; 
   const connections = wc.словарь_связей;
-  const weights = wc.веса_частей_речи;
+  const posWeights = wc.веса_частей_речи;
 
   const foundFacts: { word: string; fact: string; weight: number }[] = [];
 
@@ -319,23 +325,31 @@ function generateConnectionResponse(normalizedInput: string): string | null {
         const properties = wordsInPOS[word as keyof typeof wordsInPOS];
         let fact = `${word.charAt(0).toUpperCase() + word.slice(1)}`;
         let hasFact = false;
+        let totalWeight = 0;
 
-        if (properties.is_a) {
-          fact += ` - это ${Array.isArray(properties.is_a) ? properties.is_a.join(', ') : properties.is_a}`;
-          hasFact = true;
-        }
-        if (properties.can_do) {
-          fact += `${hasFact ? ', который' : ''} может ${Array.isArray(properties.can_do) ? properties.can_do.join(', ') : properties.can_do}`;
-          hasFact = true;
-        }
-        if (properties.related_to) {
-           fact += `. Связано с: ${Array.isArray(properties.related_to) ? properties.related_to.join(', ') : properties.related_to}`;
-           hasFact = true;
+        const relations = Object.entries(properties).sort(([, a], [, b]) => b.weight - a.weight);
+
+        for (const [relation, data] of relations) {
+          const relationText = Array.isArray(data.value) ? data.value.join(', ') : data.value;
+          let newPart = '';
+          if (relation === 'is_a') {
+            newPart = ` - это ${relationText}`;
+          } else if (relation === 'can_do') {
+            newPart = `${hasFact ? ', который' : ''} может ${relationText}`;
+          } else if (relation === 'related_to') {
+            newPart = `. Связано с: ${relationText}`;
+          }
+          if (newPart) {
+            fact += newPart;
+            hasFact = true;
+            totalWeight += data.weight;
+          }
         }
         
         if (hasFact) {
             fact += '.';
-            foundFacts.push({ word, fact, weight: weights[partOfSpeech as keyof typeof connections] || 1 });
+            const finalWeight = (posWeights[partOfSpeech as keyof typeof posWeights] || 1) * totalWeight;
+            foundFacts.push({ word, fact, weight: finalWeight });
         }
       }
     }
@@ -352,7 +366,7 @@ function generateConnectionResponse(normalizedInput: string): string | null {
   }
 
   let combinedResponse = 'Если я правильно тебя понимаю, ты говоришь о нескольких вещах. ';
-  const factStrings = foundFacts.map(f => f.fact.replace(/.$/, ''));
+  const factStrings = foundFacts.slice(0, 2).map(f => f.fact.replace(/.$/, '')); // Combine top 2 facts
   combinedResponse += factStrings.join(' и ');
   combinedResponse += '. Это довольно интересное сочетание.';
 
@@ -433,6 +447,9 @@ async function generateCreativeResponse(
 
   // Stage 1: Input Cleaner
   const normalizedInput = cleanAndNormalizeInput(userInput);
+  if (!normalizedInput) {
+      return "Пожалуйста, скажи что-нибудь.";
+  }
 
   // Stage 2: Learning Algorithm
   const definition = checkForDefinition(userInput);
