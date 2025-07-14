@@ -147,50 +147,52 @@ function generateConnectionResponse(userInput: string): string | null {
  */
 function generateResponse(userInput: string): string {
   const lowerCaseInput = userInput.toLowerCase().replace(/[.,!?]/g, '');
-  const wordsInInput = lowerCaseInput.split(/\s+/);
+  const wordsInInput = new Set(lowerCaseInput.split(/\s+/));
+
+  let bestMatch: { intent: string, score: number } | null = null;
 
   const intents = Object.keys(knowledgeBase) as Array<
     keyof typeof knowledgeBase
   >;
-
-  let bestMatch: { intent: string, score: number } | null = null;
 
   for (const intent of intents) {
     if (intent === 'неизвестная_фраза') continue;
 
     const intentData = (knowledgeBase as KnowledgeBase)[intent];
     
-    // Check for exact or very close match first
-    const perfectMatch = intentData.фразы.find(phrase => lowerCaseInput === phrase.toLowerCase());
-    if(perfectMatch){
-        bestMatch = { intent, score: 100 };
-        break; // Perfect match found, no need to check others
+    let highestScoreForIntent = 0;
+
+    for (const phrase of intentData.фразы) {
+        const lowerPhrase = phrase.toLowerCase();
+        
+        // Perfect match gives the highest score
+        if (lowerPhrase === lowerCaseInput) {
+            highestScoreForIntent = 1;
+            break; 
+        }
+
+        // Keyword matching score
+        const phraseWords = new Set(lowerPhrase.split(/\s+/));
+        const intersection = new Set([...phraseWords].filter(x => wordsInInput.has(x)));
+        const union = new Set([...phraseWords, ...wordsInInput]);
+        const score = intersection.size / union.size; // Jaccard similarity
+        
+        if (score > highestScoreForIntent) {
+            highestScoreForIntent = score;
+        }
     }
 
-    // If not a perfect match, check for keywords
-    let score = 0;
-    intentData.фразы.forEach(phrase => {
-        const phraseWords = phrase.toLowerCase().split(/\s+/);
-        const commonWords = phraseWords.filter(word => wordsInInput.includes(word));
-        // Simple scoring: prioritize longer matching phrases
-        if (commonWords.length > 0) {
-            score = Math.max(score, commonWords.length / phraseWords.length);
-        }
-    });
-
-    if (bestMatch === null || score > bestMatch.score) {
-        if(score > 0.5) { // Require a reasonable match
-            bestMatch = { intent, score };
-        }
+    if (highestScoreForIntent > 0 && (!bestMatch || highestScoreForIntent > bestMatch.score)) {
+        bestMatch = { intent, score: highestScoreForIntent };
     }
   }
-
-  if (bestMatch) {
+  
+  // Set a threshold for what is considered a "good enough" match
+  if (bestMatch && bestMatch.score > 0.3) {
     const intentData = (knowledgeBase as KnowledgeBase)[bestMatch.intent];
     const responses = intentData.ответы;
     const randomIndex = Math.floor(Math.random() * responses.length);
-    const chosenResponse = responses[randomIndex];
-    return synonymize(chosenResponse);
+    return synonymize(responses[randomIndex]);
   }
 
 
@@ -202,8 +204,7 @@ function generateResponse(userInput: string): string {
 
   // If still no response, return a random default response
   const randomIndex = Math.floor(Math.random() * defaultResponses.length);
-  const chosenResponse = defaultResponses[randomIndex];
-  return synonymize(chosenResponse);
+  return synonymize(defaultResponses[randomIndex]);
 }
 
 // --- End of the bot's "brain" ---
