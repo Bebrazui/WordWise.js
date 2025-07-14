@@ -1,6 +1,9 @@
 // src/lib/model.ts
-import { Embedding, Linear, LSTMCell, Layer, Conv2d, Flatten, relu } from './layers';
+import { Embedding, Linear, LSTMCell, Layer, Conv2d, Flatten, relu, crossEntropyLossWithSoftmaxGrad } from './layers';
+import { SGD } from './optimizer';
 import { Tensor } from './tensor';
+import { createTextBatches, createImageBatches } from '@/utils/batching';
+
 
 type TextVocabDataType = {
   vocab: string[];
@@ -18,28 +21,114 @@ type ImageVocabDataType = {
 
 export type VocabData = TextVocabDataType | ImageVocabDataType;
 
-export type BaseModel = WordWiseModel | ImageWiseModel;
+
+export interface FitCallbacks {
+    onEpochEnd?: (log: { epoch: number; loss: number; gradients: { layer: string; avgGrad: number }[] }) => void;
+}
+
+// --- Base Model Class ---
+abstract class BaseModelClass {
+    abstract type: 'text' | 'image';
+
+    abstract getParameters(): Tensor[];
+    abstract getLayers(): { [key: string]: Layer };
+
+    /**
+     * Compiles and trains the model.
+     * @param inputs Array of input Tensors.
+     * @param targets Array of target Tensors.
+     * @param options Training options like epochs, batchSize, learningRate.
+     * @param callbacks Callbacks for logging progress.
+     */
+    async fit(
+        inputs: Tensor[],
+        targets: Tensor[],
+        options: { epochs: number; batchSize: number; learningRate: number; initialEpoch?: number },
+        callbacks?: FitCallbacks
+    ): Promise<void> {
+
+        const optimizer = new SGD(options.learningRate);
+        const startEpoch = options.initialEpoch || 0;
+
+        const batches = this.type === 'text'
+            ? createTextBatches(inputs, targets, options.batchSize)
+            : createImageBatches(inputs, targets, options.batchSize);
+
+        if (batches.length === 0) {
+            throw new Error("Could not create batches. Check your data.");
+        }
+
+        for (let epoch = 0; epoch < options.epochs; epoch++) {
+            let epochLoss = 0;
+
+            for (const batch of batches) {
+                const batchInputs = new Tensor(batch.inputs.data, batch.inputs.shape);
+                const batchTargets = new Tensor(batch.targets.data, batch.targets.shape);
+
+                let predictionLogits;
+                 if (this instanceof WordWiseModel) {
+                    let {h0: h, c0: c} = this.initializeStates(batchInputs.shape[0]);
+                    predictionLogits = this.forward(batchInputs, h, c).outputLogits;
+                } else if (this instanceof ImageWiseModel) {
+                    predictionLogits = this.forward(batchInputs).outputLogits;
+                } else {
+                    throw new Error("Unknown model instance type in fit method");
+                }
+
+                const loss = crossEntropyLossWithSoftmaxGrad(predictionLogits, batchTargets);
+                if(loss.data.length === 1) {
+                    epochLoss += loss.data[0];
+                }
+
+                loss.backward();
+                optimizer.step(this.getParameters());
+            }
+
+            const avgEpochLoss = epochLoss / batches.length;
+            const currentEpoch = startEpoch + epoch;
+
+            // --- Gradient Visualization Callback ---
+            if (callbacks?.onEpochEnd) {
+                const gradientInfo = Object.entries(this.getLayers()).map(([layerName, layer]) => {
+                    let totalGradMag = 0;
+                    let paramCount = 0;
+                    layer.getParameters().forEach(p => {
+                        if (p.grad) {
+                           totalGradMag += p.grad.data.reduce((acc, val) => acc + Math.abs(val), 0) / p.grad.size;
+                        }
+                    });
+                     return { layer: layerName, avgGrad: totalGradMag };
+                });
+
+                callbacks.onEpochEnd({
+                    epoch: currentEpoch,
+                    loss: avgEpochLoss,
+                    gradients: gradientInfo
+                });
+            }
+            // Give the main thread a chance to breathe
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+    }
+}
+
 
 /**
  * WordWiseModel: Простая рекуррентная нейронная сеть для обработки текста,
  * использующая Embedding слой, LSTM ячейку и линейный выходной слой.
  * Предназначена для задач предсказания следующего слова.
  */
-export class WordWiseModel {
+export class WordWiseModel extends BaseModelClass {
   type: 'text' = 'text';
-  embeddingLayer: Embedding; // Слой для преобразования индексов слов в векторы
-  lstmCell: LSTMCell;         // Ячейка LSTM для обработки последовательностей
-  outputLayer: Linear;        // Выходной слой для предсказания следующего слова
-  public hiddenSize: number;          // Размер скрытого состояния LSTM
+  embeddingLayer: Embedding;
+  lstmCell: LSTMCell;
+  outputLayer: Linear;
+  public hiddenSize: number;
   public vocabSize: number;
   public embeddingDim: number;
 
-  /**
-   * @param vocabSize Размер словаря (количество уникальных слов).
-   * @param embeddingDim Размерность векторов эмбеддингов слов.
-   * @param hiddenSize Размерность скрытого состояния LSTM.
-   */
   constructor(vocabSize: number, embeddingDim: number, hiddenSize: number) {
+    super();
     this.embeddingLayer = new Embedding(vocabSize, embeddingDim);
     this.lstmCell = new LSTMCell(embeddingDim, hiddenSize);
     this.outputLayer = new Linear(hiddenSize, vocabSize);
@@ -48,36 +137,13 @@ export class WordWiseModel {
     this.embeddingDim = embeddingDim;
   }
 
-  /**
-   * Выполняет один шаг прямого прохода модели для обработки одного слова в батче.
-   * @param input Тензор входных индексов слов: [batchSize, 1].
-   * @param prevH Предыдущее скрытое состояние LSTM: [batchSize, hiddenSize].
-   * @param prevC Предыдущее состояние ячейки LSTM: [batchSize, hiddenSize].
-   * @returns Объект, содержащий:
-   * - `outputLogits`: Сырые логиты для предсказания следующего слова: [batchSize, vocabSize].
-   * - `h`: Новое скрытое состояние LSTM: [batchSize, hiddenSize].
-   * - `c`: Новое состояние ячейки LSTM: [batchSize, hiddenSize].
-   */
-  forward(input: Tensor, prevH?: Tensor, prevC?: Tensor): { outputLogits: Tensor, h: Tensor, c: Tensor } {
-    if (!prevH || !prevC) {
-      throw new Error("Missing previous hidden/cell state for WordWiseModel forward pass");
-    }
-    // 1. Embedding Layer: преобразует индексы слов в плотные векторы
-    const embeddedInput = this.embeddingLayer.forward(input); // [batchSize, embeddingDim]
-
-    // 2. LSTM Cell: обрабатывает текущий вход и предыдущие состояния
-    const { h, c } = this.lstmCell.forward(embeddedInput, prevH, prevC); // h: [batchSize, hiddenSize], c: [batchSize, hiddenSize]
-
-    // 3. Output Layer: преобразует скрытое состояние в логиты для предсказания следующего слова
-    const outputLogits = this.outputLayer.forward(h); // [batchSize, vocabSize]
-
+  forward(input: Tensor, prevH: Tensor, prevC: Tensor): { outputLogits: Tensor, h: Tensor, c: Tensor } {
+    const embeddedInput = this.embeddingLayer.forward(input);
+    const { h, c } = this.lstmCell.forward(embeddedInput, prevH, prevC);
+    const outputLogits = this.outputLayer.forward(h);
     return { outputLogits, h, c };
   }
 
-  /**
-   * Получает все обучаемые параметры (веса и смещения) из всех слоев модели.
-   * @returns Массив тензоров-параметров.
-   */
   getParameters(): Tensor[] {
     return [
       ...this.embeddingLayer.getParameters(),
@@ -88,50 +154,36 @@ export class WordWiseModel {
   
   getLayers(): { [key: string]: Layer } {
     return {
-      embeddingLayer: this.embeddingLayer,
-      lstmCell: this.lstmCell,
-      outputLayer: this.outputLayer,
+      'Embedding': this.embeddingLayer,
+      'LSTM': this.lstmCell,
+      'Output': this.outputLayer,
     }
   }
 
-  /**
-   * Инициализирует начальные скрытое состояние (h0) и состояние ячейки (c0)
-   * для начала новой последовательности.
-   * @param batchSize Размер батча.
-   * @returns Объект с начальными состояниями.
-   */
   initializeStates(batchSize: number): { h0: Tensor, c0: Tensor } {
-    // Инициализируем нулями
     const h0 = Tensor.zeros([batchSize, this.hiddenSize]);
     const c0 = Tensor.zeros([batchSize, this.hiddenSize]);
     return { h0, c0 };
   }
 }
 
-export class ImageWiseModel {
+export class ImageWiseModel extends BaseModelClass {
     type: 'image' = 'image';
-    // A very simple CNN: Conv -> ReLU -> Flatten -> Linear
     conv1: Conv2d;
     flatten: Flatten;
     linear1: Linear;
     public numClasses: number;
 
     constructor(numClasses: number, imageWidth: number, imageHeight: number, inChannels: number) {
+        super();
         this.numClasses = numClasses;
-
-        // Note: This is a simplified architecture. A real one would have more layers.
-        // The output size of Conv2d and Flatten would need to be calculated precisely.
-        this.conv1 = new Conv2d(inChannels, 8, 3, 1, 1); // outChannels=8, kernel=3x3
+        this.conv1 = new Conv2d(inChannels, 8, 3, 1, 1);
         this.flatten = new Flatten();
-        
-        // This is a simplification. The real input size to the linear layer
-        // depends on the output of the conv layer.
         const flattenedSize = 8 * imageWidth * imageHeight;
         this.linear1 = new Linear(flattenedSize, numClasses);
     }
     
     forward(input: Tensor): { outputLogits: Tensor } {
-        // Input shape: [batch, channels, height, width]
         let x = this.conv1.forward(input);
         x = relu(x);
         x = this.flatten.forward(x);
@@ -148,22 +200,16 @@ export class ImageWiseModel {
     
     getLayers(): { [key: string]: Layer } {
         return {
-            conv1: this.conv1,
-            flatten: this.flatten,
-            linear1: this.linear1,
+            'Convolutional': this.conv1,
+            'Output': this.linear1,
         }
     }
 }
 
-// Функции для сохранения и загрузки модели
+export type AnyModel = WordWiseModel | ImageWiseModel;
 
-/**
- * Сериализует модель и данные словаря в JSON-строку.
- * @param model Экземпляр WordWiseModel.
- * @param vocabData Данные словаря.
- * @returns JSON-строка.
- */
-export function serializeModel(model: BaseModel, vocabData: VocabData): string {
+
+export function serializeModel(model: AnyModel, vocabData: VocabData): string {
     const layersData: { [key: string]: { [key: string]: { data: number[], shape: number[] } } } = {};
 
     Object.entries(model.getLayers()).forEach(([layerName, layer]) => {
@@ -183,10 +229,10 @@ export function serializeModel(model: BaseModel, vocabData: VocabData): string {
     let architecture: any = { type: model.type };
     let vocabInfo: any = {};
 
-    if (model.type === 'text' && 'vocab' in vocabData) {
+    if (model.type === 'text' && model instanceof WordWiseModel && 'vocab' in vocabData) {
         architecture = { ...architecture, vocabSize: model.vocabSize, embeddingDim: model.embeddingDim, hiddenSize: model.hiddenSize };
         vocabInfo = { vocab: vocabData.vocab };
-    } else if (model.type === 'image' && 'labels' in vocabData) {
+    } else if (model.type === 'image' && model instanceof ImageWiseModel && 'labels' in vocabData) {
         architecture = { ...architecture, numClasses: model.numClasses };
         vocabInfo = { labels: vocabData.labels };
     }
@@ -201,12 +247,8 @@ export function serializeModel(model: BaseModel, vocabData: VocabData): string {
     return JSON.stringify(dataToSave, null, 2);
 }
 
-/**
- * Десериализует модель из JSON-строки.
- * @param jsonString JSON-строка с данными модели.
- * @returns Объект с экземпляром WordWiseModel и данными словаря.
- */
-export function deserializeModel(jsonString: string): { model: BaseModel, vocabData: VocabData } {
+
+export function deserializeModel(jsonString: string): { model: AnyModel, vocabData: VocabData } {
     const savedData = JSON.parse(jsonString);
 
     if (!savedData.architecture || !savedData.weights) {
@@ -214,7 +256,7 @@ export function deserializeModel(jsonString: string): { model: BaseModel, vocabD
     }
     
     const { architecture, weights } = savedData;
-    let model: BaseModel;
+    let model: AnyModel;
     let vocabData: VocabData;
 
     if (architecture.type === 'text') {
@@ -242,25 +284,22 @@ export function deserializeModel(jsonString: string): { model: BaseModel, vocabD
         if (numClasses !== architecture.numClasses) {
             throw new Error("Number of classes mismatch between loaded model and its architecture description.");
         }
-        // NOTE: We're passing dummy dimensions here. In a real scenario, this should be saved in the model JSON.
         model = new ImageWiseModel(numClasses, 32, 32, 3);
     } else {
         throw new Error(`Unknown model type in saved file: ${architecture.type}`);
     }
 
-
-    // Загружаем веса
     Object.entries(model.getLayers()).forEach(([layerName, layer]) => {
         const savedLayerWeights = weights[layerName];
         if (!savedLayerWeights) throw new Error(`Weights for layer ${layerName} not found in file.`);
         
         layer.getParameters().forEach(param => {
-            if (!param.name) return; // Skip unnamed params
+            if (!param.name) return;
             const savedParam = savedLayerWeights[param.name];
             if (!savedParam) throw new Error(`Parameter ${param.name} for layer ${layerName} not found.`);
             if (param.size !== savedParam.data.length) throw new Error(`Weight size mismatch for ${param.name}.`);
 
-            param.data.set(savedParam.data); // Загружаем веса в существующий тензор
+            param.data.set(savedParam.data);
         });
     });
 

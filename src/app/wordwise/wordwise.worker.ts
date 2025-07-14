@@ -1,26 +1,22 @@
-
 // src/app/wordwise/wordwise.worker.ts
 /// <reference lib="webworker" />
 
-import { WordWiseModel, ImageWiseModel, serializeModel, BaseModel, VocabData } from '@/lib/model';
-import { SGD } from '@/lib/optimizer';
-import { crossEntropyLossWithSoftmaxGrad } from '@/lib/layers';
-import { buildTextVocabulary, wordsToInputTensors, wordsToTargetTensors, createTextBatches } from '@/utils/tokenizer';
-import { buildImageVocabulary, createImageBatches } from '@/utils/image-processor';
+import { WordWiseModel, ImageWiseModel, serializeModel, AnyModel, VocabData, FitCallbacks } from '@/lib/model';
+import { buildTextVocabulary, wordsToInputTensors, wordsToTargetTensors } from '@/utils/tokenizer';
+import { buildImageVocabulary } from '@/utils/image-processor';
 import { Tensor } from '@/lib/tensor';
 
-let model: BaseModel | null = null;
-let optimizer: SGD | null = null;
+let model: AnyModel | null = null;
 let vocabData: VocabData | null = null;
-let trainingStopFlag = false;
+let trainingStopFlag = false; // Note: Stopping mechanism needs to be reimplemented within model.fit
 let trainingData: {
     inputs: Tensor[],
     targets: Tensor[],
 } | null = null;
 
 /**
- * Обработчик сообщений от основного потока.
- * Управляет инициализацией, обучением и остановкой модели.
+ * Handles messages from the main thread.
+ * Manages initialization, training, and stopping the model.
  */
 self.onmessage = async (event: MessageEvent) => {
   const { type, payload } = event.data;
@@ -31,10 +27,10 @@ self.onmessage = async (event: MessageEvent) => {
         await initialize(payload);
         break;
       case 'train':
-        trainingStopFlag = false;
         await train(payload);
         break;
       case 'stop':
+        // TODO: Implement a more robust stopping mechanism for model.fit
         trainingStopFlag = true;
         break;
     }
@@ -44,12 +40,9 @@ self.onmessage = async (event: MessageEvent) => {
 };
 
 /**
- * Инициализирует модель, словарь и оптимизатор.
+ * Initializes the model, vocabulary, and training data.
  */
 async function initialize(payload: any) {
-  const { learningRate } = payload;
-  optimizer = new SGD(learningRate);
-  
   if (payload.type === 'text') {
     const { textCorpus, embeddingDim, hiddenSize } = payload;
     vocabData = buildTextVocabulary(textCorpus);
@@ -73,12 +66,11 @@ async function initialize(payload: any) {
       } 
     });
   } else if (payload.type === 'image') {
-    const { items, imageSize } = payload; // `items` now contains { pixelData, shape, label }
+    const { items, imageSize } = payload;
     vocabData = buildImageVocabulary(items.map((item: any) => item.label));
-    model = new ImageWiseModel(vocabData.numClasses, imageSize, imageSize, 3); // Assuming 3 channels (RGB)
+    model = new ImageWiseModel(vocabData.numClasses, imageSize, imageSize, 3);
     
     const imageTensors = items.map((item: any) => new Tensor(item.pixelData, item.shape));
-
     const targetTensors = items.map((item: any) => {
         const index = (vocabData as { labelToIndex: Map<string, number> }).labelToIndex.get(item.label)!;
         const oneHot = new Float32Array((vocabData as { numClasses: number }).numClasses).fill(0);
@@ -104,71 +96,35 @@ async function initialize(payload: any) {
 }
 
 /**
- * Асинхронно обучает модель.
+ * Trains the model using the model.fit() method.
  */
 async function train(payload: { numEpochs: number, learningRate: number, batchSize: number, lossHistory: {epoch: number, loss: number}[] }) {
-  if (!model || !vocabData || !optimizer || !trainingData) {
-    throw new Error('Модель не инициализирована или нет данных для обучения.');
+  if (!model || !vocabData || !trainingData) {
+    throw new Error('Model is not initialized or no training data is available.');
   }
 
   const { numEpochs, learningRate, batchSize, lossHistory } = payload;
-  optimizer.learningRate = learningRate;
-
-  const batches = model.type === 'text'
-    ? createTextBatches(trainingData.inputs, trainingData.targets, batchSize)
-    : createImageBatches(trainingData.inputs, trainingData.targets, batchSize);
-
-  if (batches.length === 0) {
-    throw new Error("Не удалось создать батчи для обучения. Проверьте данные.");
-  }
-
-  const startEpoch = lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch + 1 : 0;
   
-  for (let epoch = 0; epoch < numEpochs; epoch++) {
-    if (trainingStopFlag) {
-      self.postMessage({ type: 'training-stopped', payload: { epoch: startEpoch + epoch } });
-      return;
+  const callbacks: FitCallbacks = {
+    onEpochEnd: (log) => {
+        self.postMessage({
+            type: 'progress',
+            payload: {
+                epoch: log.epoch,
+                loss: log.loss,
+                gradients: log.gradients,
+                progress: ((log.epoch - (lossHistory.length > 0 ? lossHistory[lossHistory.length-1].epoch : -1)) / numEpochs) * 100,
+            },
+        });
     }
+  };
 
-    let epochLoss = 0;
-    
-    for (const batch of batches) {
-       // Re-create Tensors from plain objects
-      const batchInputs = new Tensor(batch.inputs.data, batch.inputs.shape);
-      const batchTargets = new Tensor(batch.targets.data, batch.targets.shape);
-
-      let predictionLogits;
-      if (model.type === 'text') {
-        let {h0: h, c0: c} = (model as WordWiseModel).initializeStates(batchInputs.shape[0]);
-        predictionLogits = model.forward(batchInputs, h, c).outputLogits;
-      } else { // image model
-        predictionLogits = (model as ImageWiseModel).forward(batchInputs).outputLogits;
-      }
-      
-      const lossTensor = crossEntropyLossWithSoftmaxGrad(predictionLogits, batchTargets);
-      // Ensure loss is a single number before adding
-      if(lossTensor.data.length === 1) {
-        epochLoss += lossTensor.data[0];
-      }
-      
-      lossTensor.backward();
-      optimizer.step(model.getParameters());
-    }
-
-    const avgEpochLoss = epochLoss / batches.length;
-    const currentEpochNumber = startEpoch + epoch;
-
-    self.postMessage({
-      type: 'progress',
-      payload: {
-        epoch: currentEpochNumber,
-        loss: avgEpochLoss,
-        progress: ((epoch + 1) / numEpochs) * 100,
-      },
-    });
-
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
+  await model.fit(trainingData.inputs, trainingData.targets, {
+      epochs: numEpochs,
+      batchSize,
+      learningRate,
+      initialEpoch: lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch + 1 : 0
+  }, callbacks);
   
   const modelJson = serializeModel(model, vocabData);
   self.postMessage({ type: 'training-complete', payload: { modelJson } });

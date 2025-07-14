@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Info, Upload, Download, Settings, TestTube2, CheckCircle, ImagePlus, FileText } from 'lucide-react';
 
-import { serializeModel, deserializeModel, WordWiseModel, ImageWiseModel, BaseModel, VocabData } from '../../lib/model';
+import { serializeModel, deserializeModel, AnyModel, WordWiseModel, VocabData } from '../../lib/model';
 import { getWordFromPrediction } from '../../utils/tokenizer';
 import { imageToTensor } from '../../utils/image-processor';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -15,9 +15,10 @@ import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Slider } from '@/components/ui/slider';
 import { PredictionVisualizer, Prediction } from '@/components/ui/prediction-visualizer';
+import { GradientVisualizer, GradientData } from '@/components/ui/gradient-visualizer';
 import { useToast } from '@/hooks/use-toast';
 import { useTrainedModel } from '@/hooks/use-trained-model';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -58,6 +59,7 @@ export default function WordwisePage() {
   const [output, setOutput] = useState<string>('');
   const [latestPredictions, setLatestPredictions] = useState<Prediction[]>([]);
   const [lossHistory, setLossHistory] = useState<{epoch: number, loss: number}[]>([]);
+  const [gradientHistory, setGradientHistory] = useState<GradientData[]>([]);
   const [status, setStatus] = useState<string>('Готов к инициализации.');
   const [isTraining, setIsTraining] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -83,7 +85,7 @@ export default function WordwisePage() {
   const { toast } = useToast();
   
   const workerRef = useRef<Worker | null>(null);
-  const modelRef = useRef<BaseModel | null>(null);
+  const modelRef = useRef<AnyModel | null>(null);
   const vocabDataRef = useRef<VocabData | null>(null);
 
   // Setup Web Worker
@@ -102,6 +104,7 @@ export default function WordwisePage() {
           setIsInitialized(true);
           setIsTrained(false);
           setLossHistory([]);
+          setGradientHistory([]);
           setLatestPredictions([]);
           setTrainedModel(null);
           if (payload.sampleWords) {
@@ -114,6 +117,7 @@ export default function WordwisePage() {
           break;
         case 'progress':
           setLossHistory(prev => [...prev, { epoch: payload.epoch, loss: payload.loss }]);
+          setGradientHistory(payload.gradients);
           setStatus(`Обучение: Эпоха ${payload.epoch}, Потеря: ${payload.loss.toFixed(6)}`);
           setTrainingProgress(payload.progress);
           break;
@@ -176,17 +180,11 @@ export default function WordwisePage() {
         try {
             const processedItems = await Promise.all(
                 trainingData.items.map(async (item) => {
-                    // This function now returns the raw pixel data and shape
                     const { pixelData, shape } = await imageToTensor(URL.createObjectURL(item.file), imageSize, imageSize);
-                    return {
-                        pixelData, // Float32Array
-                        shape,     // [channels, height, width]
-                        label: item.label
-                    };
+                    return { pixelData, shape, label: item.label };
                 })
             );
 
-            // Transferable objects for efficiency
             const transferables = processedItems.map(item => item.pixelData.buffer);
 
             setStatus('Инициализация модели в Worker...');
@@ -194,9 +192,8 @@ export default function WordwisePage() {
                 type: 'initialize',
                 payload: {
                     type: 'image',
-                    items: processedItems, // Send processed data
+                    items: processedItems,
                     imageSize,
-                    learningRate
                 }
             }, transferables);
 
@@ -219,30 +216,14 @@ export default function WordwisePage() {
     setStatus('Начинается обучение...');
     setTrainingProgress(0);
 
-    let payload: any;
-     if (trainingData.type === 'text') {
-        payload = {
-            type: 'text',
-            numEpochs,
-            learningRate,
-            batchSize
-        };
-    } else if (trainingData.type === 'image') {
-        payload = {
-            type: 'image',
-            numEpochs,
-            learningRate,
-            batchSize
-        };
-    } else {
-        toast({ title: "Ошибка", description: "Неизвестный тип данных для обучения.", variant: "destructive" });
-        setIsTraining(false);
-        return;
-    }
-
     workerRef.current?.postMessage({
       type: 'train',
-      payload: { ...payload, lossHistory }
+      payload: { 
+        numEpochs,
+        learningRate,
+        batchSize,
+        lossHistory
+      }
     });
   };
 
@@ -251,7 +232,7 @@ export default function WordwisePage() {
         toast({ title: "Ошибка", description: "Нет модели для применения. Обучите или загрузите модель.", variant: "destructive" });
         return;
     }
-    if (modelRef.current.type !== 'text') {
+    if (modelRef.current.type !== 'text' || !('vocab' in vocabDataRef.current)) {
         toast({ title: "Ошибка", description: "К чату можно применить только текстовую модель.", variant: "destructive" });
         return;
     }
@@ -368,11 +349,10 @@ export default function WordwisePage() {
         modelRef.current = loaded.model;
         vocabDataRef.current = loaded.vocabData;
         
-        if (loaded.model.type === 'text' && 'vocab' in loaded.vocabData) {
+        if (loaded.model.type === 'text' && loaded.model instanceof WordWiseModel && 'vocab' in loaded.vocabData) {
             setTrainingData({type: 'text', corpus: 'Загружена текстовая модель. Корпус не восстанавливается.'});
-            const textModel = loaded.model as WordWiseModel;
-            setEmbeddingDim(textModel.embeddingDim);
-            setHiddenSize(textModel.hiddenSize);
+            setEmbeddingDim(loaded.model.embeddingDim);
+            setHiddenSize(loaded.model.hiddenSize);
             const wordsForSampling = loaded.vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
             const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
             setSampleWords(shuffled.slice(0, 4));
@@ -386,6 +366,7 @@ export default function WordwisePage() {
         setStatus('Модель успешно загружена. Готова к дообучению или использованию.');
         setOutput('Модель загружена.');
         setLossHistory([]);
+        setGradientHistory([]);
 
         toast({ title: "Успех", description: "Модель успешно загружена." });
       } catch (error) {
@@ -622,16 +603,16 @@ export default function WordwisePage() {
           </Card>
         </div>
 
-        <div className="lg:col-span-3">
-            <Card className="h-full">
+        <div className="lg:col-span-3 space-y-6">
+            <Card className="h-auto">
                 <CardHeader>
                     <CardTitle>График потерь (Loss)</CardTitle>
                     <CardDescription>
                         Этот график показывает, как "ошибка" модели уменьшается в процессе обучения.
-                        Чем ниже значение, тем точнее модель предсказывает следующее слово или классифицирует изображение.
+                        Чем ниже значение, тем лучше.
                     </CardDescription>
                 </CardHeader>
-                <CardContent className="h-[400px] pr-8">
+                <CardContent className="h-[300px] pr-8">
                      <ResponsiveContainer width="100%" height="100%">
                         {lossHistory.length > 0 ? (
                             <LineChart data={lossHistory} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
@@ -653,6 +634,7 @@ export default function WordwisePage() {
                     </ResponsiveContainer>
                 </CardContent>
             </Card>
+            <GradientVisualizer history={gradientHistory} />
         </div>
       </div>
     </div>
