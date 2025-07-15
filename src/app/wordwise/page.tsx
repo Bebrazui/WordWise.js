@@ -118,7 +118,14 @@ export default function WordwisePage() {
           setStatus('Worker готов. Можно инициализировать модель.');
           if (modelJson) {
              console.log("Found model in zustand, loading into worker...");
-             worker.postMessage({ type: 'load-model', payload: { modelJson } });
+             // Send model and current corpus to worker
+             worker.postMessage({ 
+                 type: 'load-model', 
+                 payload: { 
+                     modelJson,
+                     textCorpus: trainingData.type === 'text' ? trainingData.corpus : ''
+                 } 
+             });
           }
           break;
         case 'initialized':
@@ -139,6 +146,7 @@ export default function WordwisePage() {
           setLossHistory([]);
           setGradientHistory([]);
           setModelArch(payload.architecture.type);
+          setSampleWords(payload.sampleWords || []);
 
           // Update UI with loaded model params
           const { architecture } = payload;
@@ -194,7 +202,7 @@ export default function WordwisePage() {
     return () => {
       worker.terminate();
     };
-  }, [setModelJson, toast, modelJson, numEpochs, lossHistory]);
+  }, [setModelJson, toast, modelJson, numEpochs, lossHistory, trainingData]);
 
 
   const initializeModel = useCallback(() => {
@@ -314,7 +322,13 @@ export default function WordwisePage() {
             // Validate JSON before sending to worker
             JSON.parse(jsonContent);
             setModelJson(jsonContent); // Save to zustand first
-            workerRef.current?.postMessage({ type: 'load-model', payload: { modelJson: jsonContent } });
+            workerRef.current?.postMessage({ 
+                type: 'load-model', 
+                payload: { 
+                    modelJson: jsonContent,
+                    textCorpus: trainingData.type === 'text' ? trainingData.corpus : ''
+                } 
+            });
             toast({ title: "Загрузка", description: "Модель отправлена в воркер для обработки." });
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Неверный формат файла';

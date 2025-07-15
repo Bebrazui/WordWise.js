@@ -35,7 +35,7 @@ self.onmessage = async (event: MessageEvent) => {
          }
         break;
       case 'load-model':
-        await loadModel(payload.modelJson);
+        await loadModel(payload);
         break;
       case 'generate':
         await generate(payload);
@@ -47,11 +47,24 @@ self.onmessage = async (event: MessageEvent) => {
 };
 
 
-async function loadModel(modelJson: string) {
+async function loadModel(payload: {modelJson: string, textCorpus: string}) {
+    const { modelJson, textCorpus } = payload;
     const loaded = deserializeModel(modelJson);
     model = loaded.model;
     vocabData = loaded.vocabData;
     
+    // After loading a model, we need to regenerate trainingData based on the model's vocab
+    // and the *current* text corpus from the UI.
+    if ('vocab' in vocabData && textCorpus) {
+        const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
+        trainingData = {
+           inputs: wordsToInputTensors(words, vocabData.wordToIndex),
+           targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
+        };
+    } else {
+        trainingData = null; // Invalidate training data if not a text model or no corpus
+    }
+
     if (model instanceof TransformerModel) {
         modelType = 'transformer';
     } else if (model instanceof WordWiseModel) {
