@@ -1,9 +1,11 @@
+
 // src/lib/model.ts
-import { Embedding, Linear, LSTMCell, Layer, Flatten, crossEntropyLossWithSoftmaxGrad, PositionalEmbedding } from './layers';
+import { Embedding, Linear, LSTMCell, Layer, crossEntropyLossWithSoftmaxGrad, PositionalEmbedding } from './layers';
 import { TransformerEncoderBlock } from './transformer';
+import { FlowNetBlock } from './flownet';
 import { SGD } from './optimizer';
 import { Tensor } from './tensor';
-import { createSequenceBatches, createImageBatches } from '@/utils/batching';
+import { createSequenceBatches } from '@/utils/batching';
 
 
 type TextVocabDataType = {
@@ -24,15 +26,17 @@ export type VocabData = TextVocabDataType | ImageVocabDataType;
 
 
 export interface FitCallbacks {
-    onEpochEnd?: (log: { epoch: number; loss: number; gradients: { layer: string; avgGrad: number }[] }) => void;
+    onEpochEnd?: (log: { epoch: number; loss: number; gradients: { layer: string; avgGrad: number }[] }) => boolean | void;
 }
 
 // --- Base Model Class ---
 abstract class BaseModelClass {
-    abstract type: 'text' | 'image' | 'transformer';
+    abstract type: 'text' | 'image' | 'transformer' | 'flownet';
+    public stopTraining: boolean = false;
 
     abstract getParameters(): Tensor[];
     abstract getLayers(): { [key: string]: Layer | Layer[] };
+    abstract getArchitecture(): any;
 
     /**
      * Compiles and trains the model.
@@ -51,12 +55,12 @@ abstract class BaseModelClass {
         const optimizer = new SGD(options.learningRate);
         const startEpoch = options.initialEpoch || 0;
 
-        const batches = this.type === 'transformer'
-            ? createSequenceBatches(inputs, targets, options.batchSize, (this as TransformerModel).seqLen)
-            : createImageBatches(inputs, targets, options.batchSize);
+        const seqLen = (this as any).seqLen || 1;
+        const batches = createSequenceBatches(inputs, targets, options.batchSize, seqLen, this.type === 'transformer');
 
         if (batches.length === 0) {
-            throw new Error("Could not create batches. Check your data.");
+            console.warn("Could not create batches. Check your data and sequence length.");
+            return;
         }
 
         for (let epoch = 0; epoch < options.epochs; epoch++) {
@@ -66,16 +70,8 @@ abstract class BaseModelClass {
                 const batchInputs = new Tensor(batch.inputs.data, batch.inputs.shape);
                 const batchTargets = new Tensor(batch.targets.data, batch.targets.shape);
 
-                let predictionLogits;
-                 if (this instanceof WordWiseModel) {
-                    let {h0: h, c0: c} = this.initializeStates(batchInputs.shape[0]);
-                    predictionLogits = this.forward(batchInputs, h, c).outputLogits;
-                } else if (this instanceof TransformerModel) {
-                    predictionLogits = this.forward(batchInputs).outputLogits;
-                } else {
-                    throw new Error("Unknown model instance type in fit method");
-                }
-
+                const predictionLogits = (this as any).forward(batchInputs).outputLogits;
+                
                 const loss = crossEntropyLossWithSoftmaxGrad(predictionLogits, batchTargets);
                 if(loss.data.length === 1) {
                     epochLoss += loss.data[0];
@@ -88,27 +84,30 @@ abstract class BaseModelClass {
             const avgEpochLoss = epochLoss / batches.length;
             const currentEpoch = startEpoch + epoch;
 
-            // --- Gradient Visualization Callback ---
             if (callbacks?.onEpochEnd) {
                 const gradientInfo = Object.entries(this.getLayers()).flatMap(([layerName, layerOrLayers]) => {
                     const layers = Array.isArray(layerOrLayers) ? layerOrLayers : [layerOrLayers];
                     return layers.map((layer, index) => {
                          let totalGradMag = 0;
+                         let paramCount = 0;
                          layer.getParameters().forEach(p => {
                             if (p.grad) {
-                               totalGradMag += p.grad.data.reduce((acc, val) => acc + Math.abs(val), 0) / p.grad.size;
+                               totalGradMag += p.grad.data.reduce((acc, val) => acc + Math.abs(val), 0);
+                               paramCount += p.grad.size;
                             }
                          });
+                         const avgGrad = paramCount > 0 ? totalGradMag / paramCount : 0;
                          const finalLayerName = layers.length > 1 ? `${layerName}_${index}` : layerName;
-                         return { layer: finalLayerName, avgGrad: totalGradMag };
+                         return { layer: finalLayerName, avgGrad };
                     });
                 });
 
-                callbacks.onEpochEnd({
+                const stop = callbacks.onEpochEnd({
                     epoch: currentEpoch,
                     loss: avgEpochLoss,
                     gradients: gradientInfo
                 });
+                if (stop) break;
             }
              // Give the main thread a chance to breathe
             await new Promise(resolve => setTimeout(resolve, 0));
@@ -118,9 +117,7 @@ abstract class BaseModelClass {
 
 
 /**
- * WordWiseModel: Простая рекуррентная нейронная сеть для обработки текста,
- * использующая Embedding слой, LSTM ячейку и линейный выходной слой.
- * Предназначена для задач предсказания следующего слова.
+ * WordWiseModel: A simple recurrent neural network for text processing.
  */
 export class WordWiseModel extends BaseModelClass {
   type: 'text' = 'text';
@@ -141,13 +138,15 @@ export class WordWiseModel extends BaseModelClass {
     this.embeddingDim = embeddingDim;
   }
 
-  forward(input: Tensor, prevH: Tensor, prevC: Tensor): { outputLogits: Tensor, h: Tensor, c: Tensor } {
+  forward(input: Tensor, prevH?: Tensor, prevC?: Tensor): { outputLogits: Tensor, h: Tensor, c: Tensor } {
+    const batchSize = input.shape[0];
+    const h = prevH || Tensor.zeros([batchSize, this.hiddenSize]);
+    const c = prevC || Tensor.zeros([batchSize, this.hiddenSize]);
+    
     const embeddedInput = this.embeddingLayer.forward(input);
-    // Note: For simplicity, this LSTM model processes sequences as a batch of independent items.
-    // A true sequence-to-sequence model would iterate through the sequence dimension.
-    const { h, c } = this.lstmCell.forward(embeddedInput.reshape([-1, this.embeddingDim]), prevH, prevC);
-    const outputLogits = this.outputLayer.forward(h);
-    return { outputLogits, h, c };
+    const { h: nextH, c: nextC } = this.lstmCell.forward(embeddedInput.reshape([-1, this.embeddingDim]), h, c);
+    const outputLogits = this.outputLayer.forward(nextH);
+    return { outputLogits, h: nextH, c: nextC };
   }
 
   getParameters(): Tensor[] {
@@ -164,6 +163,10 @@ export class WordWiseModel extends BaseModelClass {
       'LSTM': this.lstmCell,
       'Output': this.outputLayer,
     }
+  }
+
+  getArchitecture() {
+      return { type: 'lstm', vocabSize: this.vocabSize, embeddingDim: this.embeddingDim, hiddenSize: this.hiddenSize };
   }
 
   initializeStates(batchSize: number): { h0: Tensor, c0: Tensor } {
@@ -204,8 +207,8 @@ export class TransformerModel extends BaseModelClass {
     
     forward(input: Tensor): { outputLogits: Tensor } {
         let x = this.embeddingLayer.forward(input); // [batch, seqLen, dModel]
-        x = this.posEmbeddingLayer.forward(x);     // [batch, seqLen, dModel]
-
+        x = x.add(this.posEmbeddingLayer.forward(x)); // Add positional encoding
+        
         for(const block of this.transformerBlocks) {
             x = block.forward(x);
         }
@@ -230,10 +233,97 @@ export class TransformerModel extends BaseModelClass {
             'Output': this.outputLayer,
         }
     }
+
+    getArchitecture() {
+      return {
+          type: 'transformer',
+          vocabSize: this.vocabSize,
+          seqLen: this.seqLen,
+          dModel: this.dModel,
+          numLayers: this.numLayers,
+          numHeads: this.numHeads,
+          dff: this.dff
+      };
+    }
+}
+
+export class FlowNetModel extends BaseModelClass {
+    type: 'flownet' = 'flownet';
+    embeddingLayer: Embedding;
+    flownetBlocks: FlowNetBlock[];
+    outputLayer: Linear;
+
+    public vocabSize: number;
+    public embeddingDim: number;
+    public numLayers: number;
+    public seqLen: number;
+
+    constructor(vocabSize: number, seqLen: number, embeddingDim: number, numLayers: number) {
+        super();
+        this.vocabSize = vocabSize;
+        this.embeddingDim = embeddingDim;
+        this.numLayers = numLayers;
+        this.seqLen = seqLen;
+        
+        this.embeddingLayer = new Embedding(vocabSize, embeddingDim);
+        this.flownetBlocks = Array.from({ length: numLayers }, () => new FlowNetBlock(embeddingDim));
+        this.outputLayer = new Linear(embeddingDim, vocabSize);
+    }
+    
+    forward(input: Tensor): { outputLogits: Tensor } {
+        const [batchSize, seqLen] = input.shape;
+        let x = this.embeddingLayer.forward(input); // [B, S, D]
+
+        // Initialize states for all layers
+        let states = this.flownetBlocks.map(() => Tensor.zeros([batchSize, this.embeddingDim]));
+        
+        const outputs: Tensor[] = [];
+        // Process sequence step-by-step
+        for (let t = 0; t < seqLen; t++) {
+            let stepInput = x.slice([0, t, 0], [batchSize, 1, this.embeddingDim]).reshape([batchSize, this.embeddingDim]);
+
+            for(let l = 0; l < this.numLayers; l++) {
+                const { output, newState } = this.flownetBlocks[l].forward(stepInput, states[l]);
+                stepInput = output;
+                states[l] = newState.detach(); // Detach to prevent gradients from flowing endlessly through time
+            }
+            outputs.push(stepInput.reshape([batchSize, 1, this.embeddingDim]));
+        }
+
+        const stackedOutputs = Tensor.concat(outputs, 1); // Concat along sequence dimension
+        const outputLogits = this.outputLayer.forward(stackedOutputs); // [B, S, V]
+        return { outputLogits };
+    }
+
+    getParameters(): Tensor[] {
+        return [
+            ...this.embeddingLayer.getParameters(),
+            ...this.flownetBlocks.flatMap(block => block.getParameters()),
+            ...this.outputLayer.getParameters()
+        ];
+    }
+    
+    getLayers(): { [key: string]: Layer | Layer[] } {
+        return {
+            'Embedding': this.embeddingLayer,
+            'FlowNetBlock': this.flownetBlocks,
+            'Output': this.outputLayer,
+        }
+    }
+
+    getArchitecture() {
+      return {
+          type: 'flownet',
+          vocabSize: this.vocabSize,
+          seqLen: this.seqLen,
+          embeddingDim: this.embeddingDim,
+          numLayers: this.numLayers,
+      };
+    }
 }
 
 
-export type AnyModel = WordWiseModel | TransformerModel;
+export type AnyModel = WordWiseModel | TransformerModel | FlowNetModel;
 
 
 export function serializeModel(model: AnyModel, vocabData: VocabData): string {
@@ -259,26 +349,15 @@ export function serializeModel(model: AnyModel, vocabData: VocabData): string {
        layersData[layerName] = layers.length === 1 ? serializedLayers[0] : serializedLayers;
     });
     
-    let architecture: any;
+    const architecture = model.getArchitecture();
     let vocabInfo: any = {};
 
-    if (model instanceof WordWiseModel && 'vocab' in vocabData) {
-        architecture = { type: 'text', vocabSize: model.vocabSize, embeddingDim: model.embeddingDim, hiddenSize: model.hiddenSize };
+    if ('vocab' in vocabData) {
         vocabInfo = { vocab: vocabData.vocab };
-    } else if (model instanceof TransformerModel && 'vocab' in vocabData) {
-        architecture = {
-            type: 'transformer',
-            vocabSize: model.vocabSize,
-            seqLen: model.seqLen,
-            dModel: model.dModel,
-            numLayers: model.numLayers,
-            numHeads: model.numHeads,
-            dff: model.dff
-        };
-        vocabInfo = { vocab: vocabData.vocab };
-    } else {
-        throw new Error("Unsupported model or vocab data type for serialization.");
+    } else if ('labels' in vocabData) {
+        vocabInfo = { labels: vocabData.labels };
     }
+
 
     const dataToSave = {
         architecture,
@@ -286,7 +365,7 @@ export function serializeModel(model: AnyModel, vocabData: VocabData): string {
         ...vocabInfo
     };
 
-    return JSON.stringify(dataToSave, null, 2);
+    return JSON.stringify(dataToSave);
 }
 
 
@@ -301,8 +380,8 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
     let model: AnyModel;
     let vocabData: VocabData;
 
-    if (architecture.type === 'text' || architecture.type === 'transformer') {
-         if (!savedData.vocab) throw new Error("Missing vocab for text model.");
+    if (architecture.type === 'lstm' || architecture.type === 'transformer' || architecture.type === 'flownet') {
+        if (!savedData.vocab) throw new Error("Missing vocab for text model.");
         const vocab = savedData.vocab;
         const wordToIndex = new Map(vocab.map((word: string, i: number) => [word, i]));
         const indexToWord = new Map(vocab.map((word: string, i: number) => [i, word]));
@@ -310,15 +389,18 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
         vocabData = { vocab, wordToIndex, indexToWord, vocabSize };
         
         if (vocabSize !== architecture.vocabSize) {
-             throw new Error("Vocabulary size mismatch between loaded model and its architecture description.");
+             console.warn(`Vocabulary size mismatch. Loaded model has ${architecture.vocabSize}, but current vocab is ${vocabSize}. This might be OK if you are fine-tuning.`);
         }
         
-        if (architecture.type === 'text') {
+        if (architecture.type === 'lstm') {
             const { embeddingDim, hiddenSize } = architecture;
-            model = new WordWiseModel(vocabSize, embeddingDim, hiddenSize);
-        } else { // transformer
+            model = new WordWiseModel(architecture.vocabSize, embeddingDim, hiddenSize);
+        } else if (architecture.type === 'transformer') {
             const { seqLen, dModel, numLayers, numHeads, dff } = architecture;
-            model = new TransformerModel(vocabSize, seqLen, dModel, numLayers, numHeads, dff);
+            model = new TransformerModel(architecture.vocabSize, seqLen, dModel, numLayers, numHeads, dff);
+        } else { // flownet
+            const { seqLen, embeddingDim, numLayers } = architecture;
+            model = new FlowNetModel(architecture.vocabSize, seqLen, embeddingDim, numLayers);
         }
     } else {
         throw new Error(`Unknown model type in saved file: ${architecture.type}`);
@@ -338,9 +420,13 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
             layer.getParameters().forEach(param => {
                 if (!param.name) return;
                 const savedParam = savedLayerParams[param.name];
-                if (!savedParam) throw new Error(`Parameter ${param.name} for layer ${layerName} not found.`);
-                if (param.size !== savedParam.data.length) {
-                    throw new Error(`Weight size mismatch for ${param.name} in layer ${layerName}. Expected ${param.size}, got ${savedParam.data.length}.`);
+                if (!savedParam) throw new Error(`Parameter ${param.name} for layer ${layerName}[${index}] not found.`);
+                
+                const expectedSize = param.size;
+                const loadedSize = savedParam.data.length;
+
+                if (expectedSize !== loadedSize) {
+                    throw new Error(`Weight size mismatch for ${param.name} in layer ${layerName}_${index}. Expected ${expectedSize}, got ${loadedSize}.`);
                 }
                 param.data.set(savedParam.data);
             });
@@ -349,3 +435,5 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
 
     return { model, vocabData };
 }
+
+    

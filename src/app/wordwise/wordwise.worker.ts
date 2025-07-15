@@ -1,22 +1,22 @@
+
 // src/app/wordwise/wordwise.worker.ts
 /// <reference lib="webworker" />
 
-import { WordWiseModel, TransformerModel, serializeModel, deserializeModel, AnyModel, VocabData, FitCallbacks } from '@/lib/model';
-import { buildTextVocabulary, wordsToInputTensors, wordsToTargetTensors } from '@/utils/tokenizer';
+import { WordWiseModel, TransformerModel, FlowNetModel, serializeModel, deserializeModel, AnyModel, VocabData, FitCallbacks } from '@/lib/model';
+import { buildTextVocabulary, wordsToInputTensors, wordsToTargetTensors, getWordFromPrediction } from '@/utils/tokenizer';
 import { Tensor } from '@/lib/tensor';
 
 let model: AnyModel | null = null;
 let vocabData: VocabData | null = null;
-let stopTrainingFlag = false;
 let trainingData: {
     inputs: Tensor[],
     targets: Tensor[],
 } | null = null;
-let modelType: 'lstm' | 'transformer' = 'transformer';
+let modelType: 'lstm' | 'transformer' | 'flownet' = 'flownet';
+
 
 /**
  * Handles messages from the main thread.
- * Manages initialization, training, and stopping the model.
  */
 self.onmessage = async (event: MessageEvent) => {
   const { type, payload } = event.data;
@@ -30,11 +30,15 @@ self.onmessage = async (event: MessageEvent) => {
         await train(payload);
         break;
       case 'stop':
-        stopTrainingFlag = true;
-        self.postMessage({ type: 'training-stopped', payload: { } });
+         if (model) {
+            model.stopTraining = true;
+         }
         break;
       case 'load-model':
         await loadModel(payload.modelJson);
+        break;
+      case 'generate':
+        await generate(payload);
         break;
     }
   } catch (error) {
@@ -52,14 +56,20 @@ async function loadModel(modelJson: string) {
         modelType = 'transformer';
     } else if (model instanceof WordWiseModel) {
         modelType = 'lstm';
+    } else if (model instanceof FlowNetModel) {
+        modelType = 'flownet';
     } else {
         throw new Error("Unknown model type after loading.");
     }
+
+    const wordsForSampling = ('vocab' in vocabData && vocabData.vocab) ? vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2) : [];
+    const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
     
     self.postMessage({
         type: 'model-loaded',
         payload: {
-            architecture: (model as any).getArchitecture(), // A helper method would be nice here
+            architecture: (model as any).getArchitecture(),
+            sampleWords: shuffled.slice(0, 4)
         }
     });
 }
@@ -76,22 +86,22 @@ async function initialize(payload: any) {
   if (modelType === 'lstm') {
     const { embeddingDim, hiddenSize } = payload;
     model = new WordWiseModel(vocabData.vocabSize, embeddingDim, hiddenSize);
-     const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
-     trainingData = {
-        inputs: wordsToInputTensors(words.slice(0, -1), vocabData.wordToIndex),
-        targets: wordsToTargetTensors(words.slice(1), vocabData.wordToIndex, vocabData.vocabSize)
-     };
   } else if (modelType === 'transformer') {
     const { dModel, numHeads, dff, numLayers, seqLen } = payload;
     model = new TransformerModel(vocabData.vocabSize, seqLen, dModel, numLayers, numHeads, dff);
-     const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
-      trainingData = {
-        inputs: wordsToInputTensors(words, vocabData.wordToIndex),
-        targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
-     };
+  } else if (modelType === 'flownet') {
+    const { embeddingDim, numLayers, seqLen } = payload;
+    model = new FlowNetModel(vocabData.vocabSize, seqLen, embeddingDim, numLayers);
   } else {
     throw new Error('Unknown initialization type');
   }
+
+  // Common data preparation for all text models
+  const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
+  trainingData = {
+     inputs: wordsToInputTensors(words, vocabData.wordToIndex),
+     targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
+  };
   
   const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
   const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
@@ -115,7 +125,7 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
   }
 
   const { numEpochs, learningRate, batchSize, lossHistory } = payload;
-  stopTrainingFlag = false;
+  model.stopTraining = false;
   
   const callbacks: FitCallbacks = {
     onEpochEnd: (log) => {
@@ -125,12 +135,9 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
                 epoch: log.epoch,
                 loss: log.loss,
                 gradients: log.gradients,
-                progress: ((log.epoch - (lossHistory.length > 0 ? lossHistory[lossHistory.length-1].epoch : -1)) / numEpochs) * 100,
             },
         });
-        if (stopTrainingFlag) {
-            return;
-        }
+        return model?.stopTraining || false;
     }
   };
 
@@ -141,7 +148,9 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
       initialEpoch: lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch + 1 : 0
   }, callbacks);
   
-  if (stopTrainingFlag) {
+  if (model.stopTraining) {
+       const lastEpoch = lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch : 0;
+       self.postMessage({ type: 'training-stopped', payload: { epoch: lastEpoch } });
        return;
   }
   
@@ -149,4 +158,63 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
   self.postMessage({ type: 'training-complete', payload: { modelJson } });
 }
 
+
+async function generate(payload: {startWord: string, numWords: number, temperature: number}) {
+    if (!model || !vocabData || !('wordToIndex' in vocabData)) {
+        throw new Error("Text model not ready for generation.");
+    }
+    const { startWord, numWords, temperature } = payload;
+    const { wordToIndex, indexToWord } = vocabData;
+
+    let currentWord = startWord.toLowerCase();
+    if (!wordToIndex.has(currentWord)) {
+        currentWord = '<unk>';
+    }
+
+    let generatedSequence = [currentWord];
+    let finalPredictions: any[] = [];
+
+    if (model instanceof WordWiseModel) {
+        let {h0: h, c0: c} = model.initializeStates(1);
+        for (let i = 0; i < numWords; i++) {
+            const inputTensor = new Tensor([wordToIndex.get(currentWord) || 0], [1]);
+            const { outputLogits, h: nextH, c: nextC } = model.forward(inputTensor, h, c);
+            h = nextH.detach(); c = nextC.detach();
+            const { chosenWord, topPredictions } = getWordFromPrediction(outputLogits, indexToWord, temperature, generatedSequence);
+            finalPredictions = topPredictions;
+            if (chosenWord === '<unk>') break;
+            generatedSequence.push(chosenWord);
+            currentWord = chosenWord;
+        }
+    } else if (model instanceof TransformerModel || model instanceof FlowNetModel) {
+         for (let i = 0; i < numWords; i++) {
+            const currentSequenceIndices = generatedSequence.slice(-model.seqLen).map(w => wordToIndex.get(w) || 0);
+            // Pad if necessary
+            while(currentSequenceIndices.length < model.seqLen) {
+                currentSequenceIndices.unshift(0); // Pad with <unk>
+            }
+            const inputTensor = new Tensor(currentSequenceIndices, [1, model.seqLen]);
+            const { outputLogits } = model.forward(inputTensor); // [1, seqLen, vocabSize]
+            // We only care about the prediction for the very last token in the sequence
+            const lastTimeStepLogits = outputLogits.slice([0, model.seqLen - 1, 0], [1, 1, vocabData.vocabSize]).reshape([1, vocabData.vocabSize]);
+            const { chosenWord, topPredictions } = getWordFromPrediction(lastTimeStepLogits, indexToWord, temperature, generatedSequence);
+            finalPredictions = topPredictions;
+            if (chosenWord === '<unk>') break;
+            generatedSequence.push(chosenWord);
+            currentWord = chosenWord;
+         }
+    }
+
+    self.postMessage({
+        type: 'generation-result',
+        payload: {
+            text: generatedSequence.join(' '),
+            predictions: finalPredictions
+        }
+    });
+}
+
+
 self.postMessage({ type: 'worker-ready' });
+
+    

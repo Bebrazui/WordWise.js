@@ -1,3 +1,4 @@
+
 // src/utils/batching.ts
 import { Tensor } from '../lib/tensor';
 
@@ -13,14 +14,21 @@ type Batch = {
 };
 
 /**
- * Creates batches from sequences of text input and target tensors for Transformer models.
+ * Creates batches from sequences of text input and target tensors.
  * @param inputTensors Array of input tensors (word indices).
  * @param targetTensors Array of target tensors (one-hot vectors).
  * @param batchSize The desired batch size.
  * @param seqLen The fixed sequence length for the model.
+ * @param useOverlapping For Transformer, sequences can overlap. For RNN, they shouldn't.
  * @returns An array of batches (plain objects for worker compatibility).
  */
-export function createSequenceBatches(inputTensors: Tensor[], targetTensors: Tensor[], batchSize: number, seqLen: number): Batch[] {
+export function createSequenceBatches(
+    inputTensors: Tensor[], 
+    targetTensors: Tensor[], 
+    batchSize: number, 
+    seqLen: number,
+    useOverlapping: boolean = true
+): Batch[] {
     const batches: Batch[] = [];
     const totalWords = inputTensors.length;
     if (totalWords < seqLen + 1) {
@@ -28,35 +36,36 @@ export function createSequenceBatches(inputTensors: Tensor[], targetTensors: Ten
         return [];
     }
     
-    const vocabSize = targetTensors[0].shape[1];
+    const vocabSize = targetTensors[0].shape[targetTensors[0].shape.length - 1];
+    const step = useOverlapping ? 1 : seqLen;
 
-    // Iterate through the data to create overlapping sequences
-    for (let i = 0; i < totalWords - seqLen; i += batchSize * seqLen) {
+    for (let i = 0; i < totalWords - seqLen; i += batchSize * step) {
         
         let currentInputBatch: number[] = [];
         let currentTargetBatch: number[] = [];
-        
+        let actualBatchCount = 0;
+
         for (let b = 0; b < batchSize; b++) {
-            const startIdx = i + (b * seqLen);
+            const startIdx = i + (b * step);
             if (startIdx + seqLen >= totalWords) break;
 
             const inputSeq = inputTensors.slice(startIdx, startIdx + seqLen);
-            const targetSeq = targetTensors.slice(startIdx + 1, startIdx + seqLen + 1);
+            // Target for a sequence is the next word for each word in the input
+            const targetSeq = targetTensors.slice(startIdx, startIdx + seqLen);
 
             inputSeq.forEach(t => currentInputBatch.push(t.data[0]));
             targetSeq.forEach(t => currentTargetBatch.push(...t.data));
+            actualBatchCount++;
         }
         
-        const actualBatchSize = Math.floor(currentInputBatch.length / seqLen);
-        if (actualBatchSize === 0) continue;
+        if (actualBatchCount === 0) continue;
         
-        // Truncate if we overshot
-        const finalInputData = new Float32Array(currentInputBatch.slice(0, actualBatchSize * seqLen));
-        const finalTargetData = new Float32Array(currentTargetBatch.slice(0, actualBatchSize * seqLen * vocabSize));
-
+        const finalInputData = new Float32Array(currentInputBatch);
+        const finalTargetData = new Float32Array(currentTargetBatch);
+        
         batches.push({
-            inputs: { data: finalInputData, shape: [actualBatchSize, seqLen] },
-            targets: { data: finalTargetData, shape: [actualBatchSize, seqLen, vocabSize] },
+            inputs: { data: finalInputData, shape: [actualBatchCount, seqLen] },
+            targets: { data: finalTargetData, shape: [actualBatchCount, seqLen, vocabSize] },
         });
     }
 
@@ -76,7 +85,7 @@ export function createImageBatches(inputTensors: Tensor[], targetTensors: Tensor
   if (inputTensors.length !== targetTensors.length) {
     throw new Error("Input and target tensors must have the same length.");
   }
-  const batches = [];
+  const batches: Batch[] = [];
   const totalItems = inputTensors.length;
 
   // Shuffle data
@@ -122,3 +131,5 @@ export function createImageBatches(inputTensors: Tensor[], targetTensors: Tensor
 
   return batches;
 }
+
+    

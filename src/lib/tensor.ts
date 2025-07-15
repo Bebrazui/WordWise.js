@@ -197,6 +197,15 @@ export class Tensor {
    * @returns Новый Tensor с результатом вычитания.
    */
   sub(other: Tensor): Tensor {
+    // Simplified broadcasting for scalar
+    if (other.size === 1) {
+        const scalar = other.data[0];
+        const resultData = this.data.map(val => val - scalar);
+        const result = new Tensor(resultData, this.shape);
+        // Autograd part...
+        return result;
+    }
+
     if (!this.shape.every((dim, i) => dim === other.shape[i])) {
       throw new Error("Tensors must have the same shape for subtraction.");
     }
@@ -308,10 +317,10 @@ export class Tensor {
     // Batched 4D dot product for multi-head attention
     else if (this.shape.length === 4 && other.shape.length === 4) {
         const [b, h, n, d] = this.shape;
-        const other_m = other.shape[2];
+        const d_other = other.shape[2];
         const m = other.shape[3];
 
-        if (d !== other_m) throw new Error(`Incompatible shapes for 4D dot product: [${this.shape}] vs [${other.shape}]`);
+        if (d !== d_other) throw new Error(`Incompatible shapes for 4D dot product: [${this.shape}] vs [${other.shape}]`);
         
         const outShape = [b, h, n, m];
         const outData = new Float32Array(b * h * n * m).fill(0);
@@ -393,8 +402,9 @@ export class Tensor {
         let axis1 = axes[0] < 0 ? this.shape.length + axes[0] : axes[0];
         let axis2 = axes.length > 1 ? (axes[1] < 0 ? this.shape.length + axes[1] : axes[1]) : axis1;
          if (axes.length === 2) {
-             [axis1, axis2] = [axes[0], axes[1]];
-         } else { // Transpose last two dimensions by default if one axis is given
+             axis1 = axes[0] < 0 ? this.shape.length + axes[0] : axes[0];
+             axis2 = axes[1] < 0 ? this.shape.length + axes[1] : axes[1];
+         } else { // Transpose last two dimensions by default
              axis1 = this.shape.length - 2;
              axis2 = this.shape.length - 1;
          }
@@ -431,9 +441,21 @@ export class Tensor {
    */
   reshape(newShape: number[]): Tensor {
     const newSize = newShape.reduce((a, b) => a * b, 1);
-    if (this.size !== newSize) {
+    if (this.size !== newSize && !newShape.includes(-1)) {
       throw new Error(`Cannot reshape tensor of size ${this.size} into shape [${newShape.join(',')}] with size ${newSize}`);
     }
+    
+    // Handle -1 for inferred dimension
+    if (newShape.includes(-1)) {
+        const inferredSize = this.size / (newShape.filter(d => d !== -1).reduce((a, b) => a * b, 1));
+        const finalShape = newShape.map(d => d === -1 ? inferredSize : d);
+        const result = new Tensor(this.data, finalShape);
+        if (!this._isDetached) {
+            result._parents.push({ tensor: this, gradFn: (grad) => grad.reshape(this.shape) });
+        }
+        return result;
+    }
+
     // Создаем новый тензор, но используем тот же буфер данных
     const result = new Tensor(this.data, newShape);
     result.name = this.name;
@@ -455,17 +477,17 @@ export class Tensor {
     const srcStrides = this.getStrides(this.shape);
     const dstStrides = this.getStrides(resultShape);
     
-    // Simplistic loop for now. Can be optimized.
-    function recursiveCopy(dim: number, srcOffset: number, dstOffset: number) {
-      if (dim === begin.length) {
-        resultData[dstOffset] = this.data[srcOffset];
-        return;
-      }
-      for (let i = 0; i < size[dim]; i++) {
-        recursiveCopy.call(this, dim + 1, srcOffset + (begin[dim] + i) * srcStrides[dim], dstOffset + i * dstStrides[dim]);
-      }
-    }
-    recursiveCopy.call(this, 0, 0, 0);
+    const recursiveCopy = (dim: number, srcOffset: number, dstOffset: number) => {
+        if (dim === begin.length) {
+            resultData[dstOffset] = this.data[srcOffset];
+            return;
+        }
+        const currentDstStride = dstStrides[dim] || 1;
+        for (let i = 0; i < size[dim]; i++) {
+            recursiveCopy(dim + 1, srcOffset + (begin[dim] + i) * srcStrides[dim], dstOffset + i * currentDstStride);
+        }
+    };
+    recursiveCopy(0, 0, 0);
 
     const result = new Tensor(resultData, resultShape);
     if (!this._isDetached) {
@@ -473,21 +495,71 @@ export class Tensor {
             tensor: this,
             gradFn: (grad) => {
                 const fullGrad = Tensor.zeros(this.shape);
-                // This is a simplified version of scatter/gather
-                function recursiveAdd(dim: number, srcOffset: number, dstOffset: number) {
+                const gradStrides = this.getStrides(grad.shape);
+                
+                const recursiveAdd = (dim: number, srcOffset: number, dstOffset: number) => {
                     if (dim === begin.length) {
                         fullGrad.data[dstOffset] += grad.data[srcOffset];
                         return;
                     }
+                    const currentSrcStride = gradStrides[dim] || 1;
                     for (let i = 0; i < size[dim]; i++) {
-                       recursiveAdd.call(this, dim + 1, srcOffset + i * grad.getStrides(grad.shape)[dim], dstOffset + (begin[dim] + i) * srcStrides[dim]);
+                       recursiveAdd(dim + 1, srcOffset + i * currentSrcStride, dstOffset + (begin[dim] + i) * srcStrides[dim]);
                     }
-                }
-                recursiveAdd.call(this, 0, 0, 0);
+                };
+                recursiveAdd(0, 0, 0);
                 return fullGrad;
             }
         });
     }
+    return result;
+  }
+
+  static concat(tensors: Tensor[], axis: number): Tensor {
+    if (tensors.length === 0) {
+      throw new Error("Cannot concat empty list of tensors.");
+    }
+    const firstShape = tensors[0].shape;
+    const newShape = [...firstShape];
+    newShape[axis] = tensors.reduce((sum, t) => sum + t.shape[axis], 0);
+
+    const resultSize = newShape.reduce((a, b) => a * b, 1);
+    const resultData = new Float32Array(resultSize);
+
+    let offset = 0;
+    const outerSize = firstShape.slice(0, axis).reduce((a, b) => a * b, 1);
+    const innerSize = firstShape.slice(axis + 1).reduce((a, b) => a * b, 1);
+
+    for(let i = 0; i < outerSize; i++) {
+        for(const t of tensors) {
+            const chunkSize = t.shape[axis] * innerSize;
+            const srcOffset = i * chunkSize;
+            resultData.set(t.data.subarray(srcOffset, srcOffset + chunkSize), offset);
+            offset += chunkSize;
+        }
+    }
+
+    const result = new Tensor(resultData, newShape);
+    
+    if (!tensors.some(t => t._isDetached)) {
+        let accumulatedSize = 0;
+        for (const t of tensors) {
+            const start = accumulatedSize;
+            const size = t.shape[axis];
+            result._parents.push({
+                tensor: t,
+                gradFn: (grad) => {
+                    const begin = new Array(grad.shape.length).fill(0);
+                    begin[axis] = start;
+                    const sliceSize = [...grad.shape];
+                    sliceSize[axis] = size;
+                    return grad.slice(begin, sliceSize);
+                }
+            });
+            accumulatedSize += size;
+        }
+    }
+
     return result;
   }
 
@@ -712,3 +784,5 @@ export class Tensor {
     return `Tensor(data=[${this.data.map(d => d.toFixed(4)).join(', ')}], shape=[${this.shape.join(', ')}])`;
   }
 }
+
+    

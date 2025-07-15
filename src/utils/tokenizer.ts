@@ -1,3 +1,4 @@
+
 // src/utils/tokenizer.ts
 import { Tensor } from '../lib/tensor';
 
@@ -39,6 +40,8 @@ export function wordsToInputTensors(words: string[], wordToIndex: Map<string, nu
  * @returns Массив тензоров, каждый из которых является one-hot вектором: [1, vocabSize].
  */
 export function wordsToTargetTensors(words: string[], wordToIndex: Map<string, number>, vocabSize: number): Tensor[] {
+  // For sequence models, the target for word at index `i` is the word at index `i+1`.
+  // Here, we'll just one-hot encode the words themselves, and the batching function will handle the sequence logic.
   return words.map(word => {
     const index = wordToIndex.get(word.toLowerCase()) || wordToIndex.get('<unk>')!;
     const data = new Float32Array(vocabSize).fill(0);
@@ -47,17 +50,6 @@ export function wordsToTargetTensors(words: string[], wordToIndex: Map<string, n
   });
 }
 
-/**
- * Преобразует числовой индекс в one-hot вектор.
- * @param index Индекс слова.
- * @param vocabSize Размер словаря.
- * @returns Тензор one-hot вектора: [1, vocabSize].
- */
-export function indexToOneHot(index: number, vocabSize: number): Tensor {
-  const data = new Float32Array(vocabSize).fill(0);
-  data[index] = 1;
-  return new Tensor(data, [1, vocabSize]);
-}
 
 /**
  * Выбирает слово из выходного тензора модели с учетом температуры и штрафа за повторение.
@@ -76,13 +68,13 @@ export function getWordFromPrediction(
   repetitionPenalty: number = 1.2
 ): { chosenWord: string; topPredictions: { word: string; probability: number }[] } {
   if (predictionLogits.shape.length !== 2 || predictionLogits.shape[0] !== 1) {
-    throw new Error("Prediction tensor for word selection must be [1, vocabSize].");
+    throw new Error(`Prediction tensor for word selection must be [1, vocabSize]. Got [${predictionLogits.shape}]`);
   }
   const vocabSize = predictionLogits.shape[1];
   const logits = predictionLogits.data.slice(); // Копируем, чтобы не изменять исходные логиты
 
   // --- 1. Применяем штраф за повторение ---
-  const generatedWordSet = new Set(generatedSequence);
+  const generatedWordSet = new Set(generatedSequence.slice(-10)); // Consider last 10 words for penalty
   for (let i = 0; i < vocabSize; i++) {
     const word = indexToWord.get(i);
     if (word && generatedWordSet.has(word)) {
@@ -146,3 +138,5 @@ export function getWordFromPrediction(
 
   return { chosenWord, topPredictions };
 }
+
+    
