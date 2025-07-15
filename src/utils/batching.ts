@@ -30,41 +30,45 @@ export function createSequenceBatches(
 ): Batch[] {
     const batches: Batch[] = [];
     const totalWords = inputTensors.length;
-    if (totalWords < seqLen + 1) {
-        console.warn("Not enough data to create a single batch.");
+    if (totalWords <= seqLen) {
+        console.warn("Not enough data to create a single sequence.");
         return [];
     }
     
     const vocabSize = targetTensors[0].shape[targetTensors[0].shape.length - 1];
     const step = useOverlapping ? 1 : seqLen;
+    const numSequences = Math.floor((totalWords - seqLen) / step);
 
-    for (let i = 0; i < totalWords - seqLen; i += batchSize * step) {
-        
+    for (let i = 0; i < numSequences; i += batchSize) {
+        const batchEnd = Math.min(i + batchSize, numSequences);
+        const actualBatchSize = batchEnd - i;
+
+        if (actualBatchSize <= 0) continue;
+
         let currentInputBatch: number[] = [];
         let currentTargetBatch: number[] = [];
-        let actualBatchCount = 0;
-
-        for (let b = 0; b < batchSize; b++) {
-            const startIdx = i + (b * step);
-            if (startIdx + seqLen >= totalWords) break;
+        
+        for (let b = 0; b < actualBatchSize; b++) {
+            const sequenceIndex = i + b;
+            const startIdx = sequenceIndex * step;
+            
+            if (startIdx + seqLen >= totalWords) continue;
 
             const inputSeq = inputTensors.slice(startIdx, startIdx + seqLen);
-            // Target for a sequence is the next word for each word in the input
             const targetSeq = targetTensors.slice(startIdx, startIdx + seqLen);
 
             inputSeq.forEach(t => currentInputBatch.push(t.data[0]));
             targetSeq.forEach(t => currentTargetBatch.push(...t.data));
-            actualBatchCount++;
         }
         
-        if (actualBatchCount === 0) continue;
+        if (currentInputBatch.length === 0) continue;
         
         const finalInputData = new Float32Array(currentInputBatch);
         const finalTargetData = new Float32Array(currentTargetBatch);
         
         batches.push({
-            inputs: { data: finalInputData, shape: [actualBatchCount, seqLen] },
-            targets: { data: finalTargetData, shape: [actualBatchCount, seqLen, vocabSize] },
+            inputs: { data: finalInputData, shape: [actualBatchSize, seqLen] },
+            targets: { data: finalTargetData, shape: [actualBatchSize, seqLen, vocabSize] },
         });
     }
 
@@ -130,5 +134,3 @@ export function createImageBatches(inputTensors: Tensor[], targetTensors: Tensor
 
   return batches;
 }
-
-    
