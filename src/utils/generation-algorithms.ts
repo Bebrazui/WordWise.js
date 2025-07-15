@@ -2,10 +2,10 @@
 import { Tensor } from '../lib/tensor';
 
 /**
- * Применяет набор эвристик и алгоритмов для выбора следующего слова из логитов модели.
+ * Применяет набор продвинутых эвристик и алгоритмов для выбора следующего слова.
  * Это основной "мозг" генерации, который делает текст осмысленным.
  * 
- * @param predictionLogits - Сырые логиты от модели.
+ * @param predictionLogits - Сырые логиты от модели [1, vocabSize].
  * @param indexToWord - Маппинг для преобразования индекса в слово.
  * @param temperature - Контролирует случайность.
  * @param generatedSequence - Уже сгенерированная последовательность для контекста.
@@ -14,7 +14,7 @@ import { Tensor } from '../lib/tensor';
 export function sampleNextWord(
   predictionLogits: Tensor,
   indexToWord: Map<number, string>,
-  temperature: number = 1.0,
+  temperature: number = 0.8,
   generatedSequence: string[] = [],
 ): { chosenWord: string; topPredictions: { word: string; probability: number }[] } {
     if (predictionLogits.shape.length !== 2 || predictionLogits.shape[0] !== 1) {
@@ -23,36 +23,43 @@ export function sampleNextWord(
     const vocabSize = predictionLogits.shape[1];
     const logits = predictionLogits.data.slice(); // Копируем, чтобы не изменять исходные логиты
 
-    // --- АЛГОРИТМ 1: Штраф за повторение (Repetition Penalty) ---
+    // --- Применяем температуру ---
+    // Делаем это в начале, чтобы повлиять на распределение перед всеми эвристиками.
+    for (let i = 0; i < vocabSize; i++) {
+        logits[i] /= temperature;
+    }
+
+    // --- АЛГОРИТМ 1: Агрессивный штраф за повторение (Repetition Penalty) ---
     // Уменьшаем вероятность слов, которые недавно появлялись.
-    const REPETITION_PENALTY = 1.8;
-    const penaltyWindow = Math.min(generatedSequence.length, 10);
+    const REPETITION_PENALTY = 1.9;
+    const penaltyWindow = Math.min(generatedSequence.length, 15);
     const recentWords = new Set(generatedSequence.slice(-penaltyWindow));
     
-    for (const word of recentWords) {
-        // Находим индекс слова и применяем штраф к его логиту
-        for (const [key, value] of indexToWord.entries()) {
-            if (value === word) {
-                const idx = key;
+    recentWords.forEach(word => {
+        for (const [idx, w] of indexToWord.entries()) {
+            if (w === word) {
                 logits[idx] = logits[idx] < 0 ? logits[idx] * REPETITION_PENALTY : logits[idx] / REPETITION_PENALTY;
                 break;
             }
         }
-    }
+    });
     
     // --- АЛГОРИТМ 2: Блокировка N-граммов ---
     // Запрещаем генерацию n-граммов (последовательностей), которые уже были в тексте.
-    const NGRAM_SIZE = 2; // Блокируем повторение пар слов (биграммов)
+    const NGRAM_SIZE = 2; 
     if (generatedSequence.length >= NGRAM_SIZE -1) {
         const lastNMinus1Words = generatedSequence.slice(-(NGRAM_SIZE - 1));
+        const currentNgramPrefix = lastNMinus1Words.join(' ');
         
+        // Чтобы это было эффективнее, нужно было бы заранее построить индекс N-граммов,
+        // но для простоты мы будем искать прямо в последовательности.
         for (let i = 0; i < vocabSize; i++) {
             const nextWord = indexToWord.get(i);
             if (!nextWord) continue;
             
-            const potentialNgram = [...lastNMinus1Words, nextWord].join(' ');
+            const potentialNgram = `${currentNgramPrefix} ${nextWord}`;
             if (generatedSequence.join(' ').includes(potentialNgram)) {
-                logits[i] = -Infinity; // Блокируем этот токен
+                logits[i] = -Infinity; // Блокируем этот токен, чтобы избежать повтора
             }
         }
     }
@@ -60,14 +67,9 @@ export function sampleNextWord(
     // --- АЛГОРИТМ 3: Подавление специальных и коротких токенов ---
     for (let i = 0; i < vocabSize; i++) {
         const word = indexToWord.get(i);
-        if (word === '<unk>' || word === 'вопрос' || word === 'ответ' || (word && word.length < 2)) {
+        if (word === '<unk>' || word === 'вопрос' || word === 'ответ' || (word && word.length < 2 && word !== 'у' && word !== 'а' && word !== 'и')) {
             logits[i] = -Infinity; // Полностью блокируем эти токены
         }
-    }
-
-    // --- Применяем температуру ---
-    for (let i = 0; i < vocabSize; i++) {
-        logits[i] /= temperature;
     }
 
     // --- Softmax для получения вероятностей ---
@@ -76,6 +78,11 @@ export function sampleNextWord(
         if (isFinite(l) && l > maxLogit) {
             maxLogit = l;
         }
+    }
+    // Если все логиты -Infinity, то мы в тупике.
+    if (maxLogit === -Infinity) {
+       const fallbackWord = indexToWord.get(0) || '<unk>';
+       return { chosenWord: fallbackWord, topPredictions: [{word: fallbackWord, probability: 1.0}] };
     }
 
     const probabilities = new Float32Array(vocabSize);
@@ -89,55 +96,58 @@ export function sampleNextWord(
             probabilities[i] = 0;
         }
     }
-    
-    if (sumExp === 0) { // Если все заблокированы, выбираем любой не-inf токен
-        const availableIndex = logits.findIndex(l => isFinite(l));
-        const chosenWord = indexToWord.get(availableIndex) || '<unk>';
-        return { chosenWord, topPredictions: [{word: chosenWord, probability: 1.0}]};
-    }
 
     for (let i = 0; i < vocabSize; i++) {
         probabilities[i] /= sumExp;
     }
 
-    // --- АЛГОРИТМ 4: Top-K Sampling ---
-    // Выбираем слово не из всего словаря, а только из K наиболее вероятных.
-    const K = 20; 
-    const allPredictions = Array.from(probabilities)
+    // --- АЛГОРИТМ 4: Сэмплирование по ядру (Nucleus Sampling / Top-P) ---
+    // Это более продвинутый метод, чем Top-K.
+    const TOP_P = 0.92;
+    const predictionsWithIndices = Array.from(probabilities)
         .map((probability, index) => ({
             word: indexToWord.get(index) || '<unk>',
             probability,
             index,
         }))
-        .filter(p => p.probability > 0); // Отфильтровываем заблокированные
+        .filter(p => p.probability > 0);
 
-    allPredictions.sort((a, b) => b.probability - a.probability);
-    
-    const topKPredictions = allPredictions.slice(0, K);
-    
-    if (topKPredictions.length === 0) {
-        const fallbackWord = indexToWord.get(0) || '<unk>';
-        return { chosenWord: fallbackWord, topPredictions: [] };
-    }
-    
-    // Пересчитываем вероятности внутри Top-K
-    const topKSum = topKPredictions.reduce((sum, p) => sum + p.probability, 0);
-    const topKNormalized = topKPredictions.map(p => ({ ...p, probability: p.probability / topKSum }));
+    predictionsWithIndices.sort((a, b) => b.probability - a.probability);
 
-    // --- Финальный выбор слова (сэмплирование) ---
-    let randomValue = Math.random();
+    const nucleus: typeof predictionsWithIndices = [];
     let cumulativeProbability = 0;
-    let predictedIndex = topKNormalized[0].index; // Fallback to the best one
-
-    for (const pred of topKNormalized) {
-        cumulativeProbability += pred.probability;
-        if (randomValue <= cumulativeProbability) {
-            predictedIndex = pred.index;
+    for (const p of predictionsWithIndices) {
+        nucleus.push(p);
+        cumulativeProbability += p.probability;
+        if (cumulativeProbability >= TOP_P) {
             break;
         }
     }
 
-    const chosenWord = indexToWord.get(predictedIndex) || '<unk>';
+    if (nucleus.length === 0) {
+        // Если ядро пустое (что маловероятно), берем лучший токен
+        const fallback = predictionsWithIndices[0] || { index: 0, word: '<unk>', probability: 1.0 };
+        nucleus.push(fallback);
+    }
+    
+    // Пересчитываем вероятности внутри ядра
+    const nucleusSum = nucleus.reduce((sum, p) => sum + p.probability, 0);
+    const nucleusNormalized = nucleus.map(p => ({ ...p, probability: p.probability / nucleusSum }));
 
-    return { chosenWord, topPredictions: allPredictions.slice(0, 5) };
+    // --- Финальный выбор слова (сэмплирование из ядра) ---
+    let randomValue = Math.random();
+    let chosenIndex = nucleusNormalized[0].index; // Fallback to the best one
+
+    for (const pred of nucleusNormalized) {
+        randomValue -= pred.probability;
+        if (randomValue <= 0) {
+            chosenIndex = pred.index;
+            break;
+        }
+    }
+
+    const chosenWord = indexToWord.get(chosenIndex) || '<unk>';
+    const top5ForDisplay = predictionsWithIndices.slice(0, 5);
+
+    return { chosenWord, topPredictions: top5ForDisplay };
 }
