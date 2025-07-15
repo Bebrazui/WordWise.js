@@ -69,8 +69,8 @@ export default function WordwisePage() {
   const [gradientHistory, setGradientHistory] = useState<GradientData[]>([]);
   const [status, setStatus] = useState<string>('Готов к инициализации.');
   const [isTraining, setIsTraining] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(isTrained);
   const [isTrained, setIsTrained] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [sampleWords, setSampleWords] = useState<string[]>([]);
 
@@ -204,7 +204,7 @@ export default function WordwisePage() {
     return () => {
       worker.terminate();
     };
-  }, [setModelJson, toast, modelJson, numEpochs]);
+  }, [setModelJson, toast, numEpochs]);
 
 
   const initializeModel = useCallback(() => {
@@ -635,3 +635,5 @@ export default function WordwisePage() {
 }
 
   
+
+    
