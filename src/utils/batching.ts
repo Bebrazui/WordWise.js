@@ -14,6 +14,7 @@ type Batch = {
 
 /**
  * Creates batches from sequences of text input and target tensors.
+ * This is a critical function for sequence models.
  * @param inputTensors Array of input tensors (word indices).
  * @param targetTensors Array of target tensors (one-hot vectors).
  * @param batchSize The desired batch size.
@@ -22,53 +23,56 @@ type Batch = {
  * @returns An array of batches (plain objects for worker compatibility).
  */
 export function createSequenceBatches(
-    inputTensors: Tensor[], 
-    targetTensors: Tensor[], 
-    batchSize: number, 
+    inputTensors: Tensor[],
+    targetTensors: Tensor[],
+    batchSize: number,
     seqLen: number,
     useOverlapping: boolean = true
 ): Batch[] {
     const batches: Batch[] = [];
-    const totalWords = inputTensors.length;
-    if (totalWords <= seqLen) {
-        console.warn("Not enough data to create a single sequence.");
+    const totalItems = inputTensors.length;
+    
+    if (totalItems <= seqLen) {
+        console.warn("Not enough data to create even a single sequence.");
         return [];
     }
     
     const vocabSize = targetTensors[0].shape[targetTensors[0].shape.length - 1];
     const step = useOverlapping ? 1 : seqLen;
-    const numSequences = Math.floor((totalWords - seqLen) / step);
+    
+    const sequences: {inputs: number[], targets: number[][]}[] = [];
 
-    for (let i = 0; i < numSequences; i += batchSize) {
-        const batchEnd = Math.min(i + batchSize, numSequences);
-        const actualBatchSize = batchEnd - i;
+    // 1. Create all possible sequences from the text
+    for (let i = 0; i <= totalItems - seqLen; i += step) {
+        const inputSeq = inputTensors.slice(i, i + seqLen).map(t => t.data[0]);
+        // The target for a sequence is the same sequence, shifted by one.
+        // The model learns to predict the next word at each position.
+        const targetSeq = targetTensors.slice(i, i + seqLen).map(t => Array.from(t.data));
+        sequences.push({ inputs: inputSeq, targets: targetSeq });
+    }
 
-        if (actualBatchSize <= 0) continue;
+    if (sequences.length === 0) {
+        return [];
+    }
 
-        let currentInputBatch: number[] = [];
-        let currentTargetBatch: number[] = [];
-        
-        for (let b = 0; b < actualBatchSize; b++) {
-            const sequenceIndex = i + b;
-            const startIdx = sequenceIndex * step;
-            
-            if (startIdx + seqLen >= totalWords) continue;
+    // 2. Group sequences into batches
+    for (let i = 0; i < sequences.length; i += batchSize) {
+        const batchSequences = sequences.slice(i, i + batchSize);
+        const actualBatchSize = batchSequences.length;
 
-            const inputSeq = inputTensors.slice(startIdx, startIdx + seqLen);
-            const targetSeq = targetTensors.slice(startIdx, startIdx + seqLen);
+        const batchInputs = new Float32Array(actualBatchSize * seqLen);
+        const batchTargets = new Float32Array(actualBatchSize * seqLen * vocabSize);
 
-            inputSeq.forEach(t => currentInputBatch.push(t.data[0]));
-            targetSeq.forEach(t => currentTargetBatch.push(...t.data));
-        }
-        
-        if (currentInputBatch.length === 0) continue;
-        
-        const finalInputData = new Float32Array(currentInputBatch);
-        const finalTargetData = new Float32Array(currentTargetBatch);
+        batchSequences.forEach((seq, batchIndex) => {
+            batchInputs.set(seq.inputs, batchIndex * seqLen);
+            // Flatten the targets for the batch
+            const flatTargets = seq.targets.flat();
+            batchTargets.set(flatTargets, batchIndex * seqLen * vocabSize);
+        });
         
         batches.push({
-            inputs: { data: finalInputData, shape: [actualBatchSize, seqLen] },
-            targets: { data: finalTargetData, shape: [actualBatchSize, seqLen, vocabSize] },
+            inputs: { data: batchInputs, shape: [actualBatchSize, seqLen] },
+            targets: { data: batchTargets, shape: [actualBatchSize, seqLen, vocabSize] },
         });
     }
 
