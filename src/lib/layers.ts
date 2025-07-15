@@ -118,8 +118,8 @@ export class Linear extends Layer {
     // Инициализация весов методом Glorot/Xavier Uniform
     const limit = Math.sqrt(6 / (inputSize + outputSize));
     this.weights = Tensor.randn([inputSize, outputSize], limit);
-    // Инициализация смещений НЕ НУЛЯМИ, чтобы избежать "мертвых" нейронов
-    this.bias = Tensor.randn([1, outputSize], limit);
+    // Инициализация смещений НУЛЯМИ для стабильности
+    this.bias = Tensor.zeros([1, outputSize]);
 
     this.weights.name = 'weights';
     this.bias.name = 'bias';
@@ -206,19 +206,19 @@ export class LSTMCell extends Layer {
 
         this.Wi = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wi.name = 'Wi';
         this.Ui = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Ui.name = 'Ui';
-        this.Bi = Tensor.randn([1, hiddenSize], limit_x); this.Bi.name = 'Bi';
+        this.Bi = Tensor.zeros([1, hiddenSize]); this.Bi.name = 'Bi';
 
         this.Wf = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wf.name = 'Wf';
         this.Uf = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Uf.name = 'Uf';
-        this.Bf = Tensor.randn([1, hiddenSize], limit_x); this.Bf.name = 'Bf';
+        this.Bf = Tensor.zeros([1, hiddenSize]); this.Bf.name = 'Bf';
 
         this.Wo = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wo.name = 'Wo';
         this.Uo = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Uo.name = 'Uo';
-        this.Bo = Tensor.randn([1, hiddenSize], limit_x); this.Bo.name = 'Bo';
+        this.Bo = Tensor.zeros([1, hiddenSize]); this.Bo.name = 'Bo';
 
         this.Wc = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wc.name = 'Wc';
         this.Uc = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Uc.name = 'Uc';
-        this.Bc = Tensor.randn([1, hiddenSize], limit_x); this.Bc.name = 'Bc';
+        this.Bc = Tensor.zeros([1, hiddenSize]); this.Bc.name = 'Bc';
 
         this.parameters = [
             this.Wi, this.Ui, this.Bi,
