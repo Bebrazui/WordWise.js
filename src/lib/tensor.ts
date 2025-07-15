@@ -196,13 +196,19 @@ export class Tensor {
         const [m, k] = this.shape;
         const [_, n] = other.shape;
         const resultData = new Float32Array(m * n).fill(0);
+
+        const thisData = this.data;
+        const otherData = other.data;
+
         for (let i = 0; i < m; i++) {
+            const i_k = i * k;
+            const i_n = i * n;
             for (let j = 0; j < n; j++) {
                 let sum = 0;
                 for (let l = 0; l < k; l++) {
-                    sum += this.data[i * k + l] * other.data[l * n + j];
+                    sum += thisData[i_k + l] * otherData[l * n + j];
                 }
-                resultData[i * n + j] = sum;
+                resultData[i_n + j] = sum;
             }
         }
         const result = new Tensor(resultData, [m, n]);
@@ -214,20 +220,35 @@ export class Tensor {
     // Batched matrix multiplication for models like Transformer/FlowNet output
     // [B, S, K] @ [K, N] -> [B, S, N]
     else if (this.shape.length === 3 && other.shape.length === 2) {
-        const [b, s, k] = this.shape;
-        const [k_other, n] = other.shape;
-        if (k !== k_other) {
+        if (this.shape[2] !== other.shape[0]) {
             throw new Error(`Matrices are not compatible for batched dot product: ${this.shape} vs ${other.shape}`);
         }
+        const [b, s, k] = this.shape;
+        const [_, n] = other.shape;
         
-        const reshaped_this = this.reshape([b * s, k]);
-        const result_reshaped = reshaped_this.dot(other); // This is now a 2D dot product
-        const result = result_reshaped.reshape([b, s, n]);
+        const resultData = new Float32Array(b * s * n).fill(0);
+        const thisData = this.data;
+        const otherData = other.data;
         
-        // The gradFn needs to handle the reshape back
+        for (let bi = 0; bi < b; bi++) {
+            for (let si = 0; si < s; si++) {
+                const out_offset = (bi * s + si) * n;
+                const in_offset = (bi * s + si) * k;
+                for (let ni = 0; ni < n; ni++) {
+                    let sum = 0;
+                    for (let ki = 0; ki < k; ki++) {
+                         sum += thisData[in_offset + ki] * otherData[ki * n + ni];
+                    }
+                    resultData[out_offset + ni] = sum;
+                }
+            }
+        }
+        
+        const result = new Tensor(resultData, [b, s, n]);
+        
         if (!this._isDetached && !other._isDetached) {
             result._parents.push(
-                { tensor: this, gradFn: (grad) => grad.reshape([b * s, n]).dot(other.transpose()).reshape(this.shape) },
+                { tensor: this, gradFn: (grad) => grad.dot(other.transpose()) },
                 { tensor: other, gradFn: (grad) => this.reshape([b * s, k]).transpose().dot(grad.reshape([b*s, n])) }
             );
         }

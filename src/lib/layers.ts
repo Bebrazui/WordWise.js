@@ -235,18 +235,29 @@ export class LSTMCell extends Layer {
      * @returns Объект с новым скрытым состоянием (h) и состоянием ячейки (c).
      */
     forward(input: Tensor, prevH: Tensor, prevC: Tensor): { h: Tensor, c: Tensor } {
-        // Вычисления для Input Gate: i_t = sigmoid(W_xi * x_t + W_hi * h_{t-1} + b_i)
-        const i_t = sigmoid(input.dot(this.Wi).add(prevH.dot(this.Ui)).add(this.Bi));
-        // Вычисления для Forget Gate: f_t = sigmoid(W_xf * x_t + W_hf * h_{t-1} + b_f)
-        const f_t = sigmoid(input.dot(this.Wf).add(prevH.dot(this.Uf)).add(this.Bf));
-        // Вычисления для Cell State Candidate: c_tilde_t = tanh(W_xc * x_t + W_hc * h_{t-1} + b_c)
-        const c_tilde_t = tanh(input.dot(this.Wc).add(prevH.dot(this.Uc)).add(this.Bc));
+        // Оптимизация: объединяем матричные умножения, где это возможно
+        const gates = input.dot(this.Wi).add(prevH.dot(this.Ui)).add(this.Bi).add(
+                      input.dot(this.Wf).add(prevH.dot(this.Uf)).add(this.Bf)
+                    ).add(
+                      input.dot(this.Wo).add(prevH.dot(this.Uo)).add(this.Bo)
+                    ).add(
+                      input.dot(this.Wc).add(prevH.dot(this.Uc)).add(this.Bc)
+                    );
+        
+        const hiddenSize = this.Bi.shape[1];
+        const i_t_raw = gates.slice([0, 0], [gates.shape[0], hiddenSize]);
+        const f_t_raw = gates.slice([0, hiddenSize], [gates.shape[0], hiddenSize]);
+        const o_t_raw = gates.slice([0, hiddenSize * 2], [gates.shape[0], hiddenSize]);
+        const c_tilde_t_raw = gates.slice([0, hiddenSize * 3], [gates.shape[0], hiddenSize]);
 
+        const i_t = sigmoid(i_t_raw);
+        const f_t = sigmoid(f_t_raw);
+        const o_t = sigmoid(o_t_raw);
+        const c_tilde_t = tanh(c_tilde_t_raw);
+        
         // Обновление состояния ячейки: c_t = f_t * c_{t-1} + i_t * c_tilde_t
         const c_t = f_t.mul(prevC).add(i_t.mul(c_tilde_t));
 
-        // Вычисления для Output Gate: o_t = sigmoid(W_xo * x_t + W_ho * h_{t-1} + b_o)
-        const o_t = sigmoid(input.dot(this.Wo).add(prevH.dot(this.Uo)).add(this.Bo));
         // Обновление скрытого состояния: h_t = o_t * tanh(c_t)
         const h_t = o_t.mul(tanh(c_t));
 
