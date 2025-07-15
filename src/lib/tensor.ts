@@ -1,4 +1,3 @@
-
 // src/lib/tensor.ts
 
 /**
@@ -710,25 +709,11 @@ export class Tensor {
 
   /**
    * Выполняет обратный проход (backpropagation) для вычисления градиентов.
-   * Градиенты обнуляются перед каждым новым вызовом.
+   * Градиенты обнуляются перед каждым новым вызовом в оптимизаторе.
    * @param initialGrad Опциональный начальный градиент (обычно [1.0] для функции потерь).
    */
   backward(initialGrad?: Tensor): void {
-    // 1. Сброс всех градиентов в графе до начала нового backward прохода
-    const nodesToReset = new Set<Tensor>();
-    const stack: Tensor[] = [this];
-    while (stack.length > 0) {
-      const node = stack.pop()!;
-      if (!nodesToReset.has(node)) {
-        nodesToReset.add(node);
-        node._parents.forEach(p => stack.push(p.tensor));
-      }
-    }
-    nodesToReset.forEach(node => {
-        node.grad = null;
-    });
-
-    // 2. Установка начального градиента для текущего тензора (обычно Loss)
+    // 1. Установка начального градиента для текущего тензора (обычно Loss)
     if (!initialGrad) {
       if (this.size !== 1) {
         throw new Error("Backward call without initialGrad expects a scalar tensor (e.g., a loss value).");
@@ -741,7 +726,7 @@ export class Tensor {
       this.grad = initialGrad;
     }
 
-    // 3. Построение топологической сортировки графа вычислений
+    // 2. Построение топологической сортировки графа вычислений
     const visited = new Set<Tensor>();
     const topoSort: Tensor[] = [];
 
@@ -754,7 +739,7 @@ export class Tensor {
     }
     buildTopo(this);
 
-    // 4. Проход по графу в обратном порядке для вычисления и агрегирования градиентов
+    // 3. Проход по графу в обратном порядке для вычисления и агрегирования градиентов
     for (let i = topoSort.length - 1; i >= 0; i--) {
       const node = topoSort[i];
       if (node.grad === null) {
@@ -784,5 +769,3 @@ export class Tensor {
     return `Tensor(data=[${this.data.map(d => d.toFixed(4)).join(', ')}], shape=[${this.shape.join(', ')}])`;
   }
 }
-
-    

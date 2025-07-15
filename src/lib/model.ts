@@ -1,4 +1,3 @@
-
 // src/lib/model.ts
 import { Embedding, Linear, LSTMCell, Layer, crossEntropyLossWithSoftmaxGrad, PositionalEmbedding } from './layers';
 import { TransformerEncoderBlock } from './transformer';
@@ -70,6 +69,8 @@ abstract class BaseModelClass {
             for (const batch of batches) {
                 if (this.stopTraining) break;
                 
+                optimizer.zeroGrad(this.getParameters());
+
                 const batchInputs = new Tensor(batch.inputs.data, batch.inputs.shape);
                 const batchTargets = new Tensor(batch.targets.data, batch.targets.shape);
 
