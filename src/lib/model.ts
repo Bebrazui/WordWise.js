@@ -1,4 +1,3 @@
-
 // src/lib/model.ts
 import { Embedding, Linear, LSTMCell, Layer, crossEntropyLossWithSoftmaxGrad, PositionalEmbedding } from './layers';
 import { TransformerEncoderBlock } from './transformer';
@@ -56,7 +55,7 @@ abstract class BaseModelClass {
         const startEpoch = options.initialEpoch || 0;
 
         const seqLen = (this as any).seqLen || 1;
-        const batches = createSequenceBatches(inputs, targets, options.batchSize, seqLen, this.type === 'transformer');
+        const batches = createSequenceBatches(inputs, targets, options.batchSize, seqLen, this.type === 'transformer' || this.type === 'flownet');
 
         if (batches.length === 0) {
             console.warn("Could not create batches. Check your data and sequence length.");
@@ -64,9 +63,12 @@ abstract class BaseModelClass {
         }
 
         for (let epoch = 0; epoch < options.epochs; epoch++) {
+            if (this.stopTraining) break;
             let epochLoss = 0;
 
             for (const batch of batches) {
+                if (this.stopTraining) break;
+                
                 const batchInputs = new Tensor(batch.inputs.data, batch.inputs.shape);
                 const batchTargets = new Tensor(batch.targets.data, batch.targets.shape);
 
@@ -80,9 +82,11 @@ abstract class BaseModelClass {
                 loss.backward();
                 optimizer.step(this.getParameters());
             }
+            
+            if (this.stopTraining) break;
 
             const avgEpochLoss = epochLoss / batches.length;
-            const currentEpoch = startEpoch + epoch;
+            const currentEpoch = startEpoch + epoch + 1;
 
             if (callbacks?.onEpochEnd) {
                 const gradientInfo = Object.entries(this.getLayers()).flatMap(([layerName, layerOrLayers]) => {

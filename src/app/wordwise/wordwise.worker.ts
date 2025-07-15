@@ -1,4 +1,3 @@
-
 // src/app/wordwise/wordwise.worker.ts
 /// <reference lib="webworker" />
 
@@ -145,7 +144,7 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
       epochs: numEpochs,
       batchSize,
       learningRate,
-      initialEpoch: lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch + 1 : 0
+      initialEpoch: lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch : 0
   }, callbacks);
   
   if (model.stopTraining) {
