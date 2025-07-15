@@ -31,6 +31,7 @@ self.onmessage = async (event: MessageEvent) => {
         break;
       case 'stop':
         stopTrainingFlag = true;
+        self.postMessage({ type: 'training-stopped', payload: { } });
         break;
       case 'load-model':
         await loadModel(payload.modelJson);
@@ -127,7 +128,9 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
                 progress: ((log.epoch - (lossHistory.length > 0 ? lossHistory[lossHistory.length-1].epoch : -1)) / numEpochs) * 100,
             },
         });
-        return stopTrainingFlag; // Return flag to stop training if true
+        if (stopTrainingFlag) {
+            return;
+        }
     }
   };
 
@@ -139,7 +142,6 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
   }, callbacks);
   
   if (stopTrainingFlag) {
-       self.postMessage({ type: 'training-stopped', payload: { epoch: lossHistory.length > 0 ? lossHistory[lossHistory.length-1].epoch : 0 } });
        return;
   }
   

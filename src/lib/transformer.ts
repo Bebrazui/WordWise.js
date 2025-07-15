@@ -41,12 +41,15 @@ class MultiHeadAttention extends Layer {
 
     private splitHeads(x: Tensor): Tensor {
         const [batchSize, seqLen, dModel] = x.shape;
-        return x.reshape([batchSize, seqLen, this.numHeads, this.dk]).transpose(1, 2); // [B, H, S, Dk]
+        // Reshape to [B, S, H, Dk] then transpose to [B, H, S, Dk]
+        return x.reshape([batchSize, seqLen, this.numHeads, this.dk]).transpose(1, 2);
     }
 
     private combineHeads(x: Tensor): Tensor {
+        // x is [B, H, S, Dk]
         const [batchSize, numHeads, seqLen, dk] = x.shape;
-        return x.transpose(1, 2).reshape([batchSize, seqLen, this.dModel]); // [B, S, Dm]
+        // Transpose to [B, S, H, Dk] then reshape to [B, S, Dm]
+        return x.transpose(1, 2).reshape([batchSize, seqLen, this.dModel]);
     }
 
     forward(q: Tensor, k: Tensor, v: Tensor, mask: Tensor | null = null): Tensor {

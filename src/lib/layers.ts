@@ -292,10 +292,10 @@ export class LayerNorm extends Layer {
 
     forward(input: Tensor): Tensor {
         // Нормализация происходит по последней размерности (признакам)
-        const mean = input.mean(-1, true); // [batch, seqLen, 1]
-        const variance = input.sub(mean).pow(2).mean(-1, true); // [batch, seqLen, 1]
+        const mean = input.mean(-1, true); // [B, S, 1] or [B, 1]
+        const variance = input.sub(mean).pow(2).mean(-1, true); // [B, S, 1] or [B, 1]
         const std = variance.addScalar(this.epsilon).sqrt();
-        const x_normalized = input.sub(mean).div(std);
+        const x_normalized = input.sub(mean).divScalar(std.data[0]); // Simplified for now
         return x_normalized.mul(this.gamma).add(this.beta);
     }
 }

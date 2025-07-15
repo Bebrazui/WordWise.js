@@ -24,7 +24,7 @@ export type VocabData = TextVocabDataType | ImageVocabDataType;
 
 
 export interface FitCallbacks {
-    onEpochEnd?: (log: { epoch: number; loss: number; gradients: { layer: string; avgGrad: number }[] }) => boolean;
+    onEpochEnd?: (log: { epoch: number; loss: number; gradients: { layer: string; avgGrad: number }[] }) => void;
 }
 
 // --- Base Model Class ---
@@ -61,7 +61,6 @@ abstract class BaseModelClass {
 
         for (let epoch = 0; epoch < options.epochs; epoch++) {
             let epochLoss = 0;
-            let shouldStop = false;
 
             for (const batch of batches) {
                 const batchInputs = new Tensor(batch.inputs.data, batch.inputs.shape);
@@ -105,15 +104,14 @@ abstract class BaseModelClass {
                     });
                 });
 
-                shouldStop = callbacks.onEpochEnd({
+                callbacks.onEpochEnd({
                     epoch: currentEpoch,
                     loss: avgEpochLoss,
                     gradients: gradientInfo
                 });
             }
-            // Give the main thread a chance to breathe and check for stop signal
-            await new Promise(resolve => setTimeout(resolve, 10));
-            if (shouldStop) break;
+             // Give the main thread a chance to breathe
+            await new Promise(resolve => setTimeout(resolve, 0));
         }
     }
 }
