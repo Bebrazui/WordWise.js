@@ -26,7 +26,7 @@ export type VocabData = TextVocabDataType | ImageVocabDataType;
 
 
 export interface FitCallbacks {
-    onEpochEnd?: (log: { epoch: number; loss: number; gradients: { layer: string; avgGrad: number }[] }) => boolean | void;
+    onEpochEnd?: (log: { epoch: number; loss: number; gradients: { layer: string; avgGrad: number }[] }) => Promise<boolean | void> | boolean | void;
 }
 
 export interface FitOptions {
@@ -118,7 +118,7 @@ abstract class BaseModelClass {
                     });
                 });
 
-                const stop = callbacks.onEpochEnd({
+                const stop = await callbacks.onEpochEnd({
                     epoch: currentEpoch,
                     loss: avgEpochLoss,
                     gradients: gradientInfo
@@ -128,7 +128,6 @@ abstract class BaseModelClass {
                     break;
                 };
             }
-             // Give the main thread a chance to breathe
             await new Promise(resolve => setTimeout(resolve, 0));
         }
     }
@@ -408,9 +407,8 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
         const vocabSize = vocab.length;
         vocabData = { vocab, wordToIndex, indexToWord, vocabSize };
         
-        // This check is too strict for fine-tuning, so we just warn.
         if (vocabSize !== architecture.vocabSize) {
-             console.warn(`Vocabulary size mismatch. Loaded model has ${architecture.vocabSize}, but current vocab is ${vocabSize}.`);
+             console.warn(`Vocabulary size mismatch. Loaded model has ${architecture.vocabSize}, but current vocab is ${vocabSize}. This may lead to errors.`);
         }
         
         if (architecture.type === 'lstm') {
@@ -456,3 +454,5 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
 
     return { model, vocabData, lossHistory: lossHistory || [] };
 }
+
+    

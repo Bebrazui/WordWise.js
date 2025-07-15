@@ -5,6 +5,7 @@
 import { WordWiseModel, TransformerModel, FlowNetModel, serializeModel, deserializeModel, AnyModel, VocabData, FitCallbacks, FitOptions } from '@/lib/model';
 import { buildTextVocabulary, wordsToInputTensors, wordsToTargetTensors, getWordFromPrediction } from '@/utils/tokenizer';
 import { Tensor } from '@/lib/tensor';
+import { getCheckpoint, saveCheckpoint, clearCheckpoint } from '@/lib/idb';
 
 let model: AnyModel | null = null;
 let vocabData: VocabData | null = null;
@@ -53,6 +54,21 @@ self.onmessage = async (event: MessageEvent) => {
             self.postMessage({ type: 'model-response', payload: { modelJson } });
         }
         break;
+      case 'check-for-checkpoint':
+        const checkpointJson = await getCheckpoint();
+        if (checkpointJson) {
+           self.postMessage({ type: 'checkpoint-found' });
+        }
+        break;
+      case 'load-from-checkpoint':
+         const cpJson = await getCheckpoint();
+         if (cpJson) {
+            await loadModel({ modelJson: cpJson });
+         }
+         break;
+      case 'clear-checkpoint':
+         await clearCheckpoint();
+         break;
     }
   } catch (error) {
     self.postMessage({ type: 'error', payload: { message: error instanceof Error ? error.message : String(error), error } });
@@ -134,17 +150,16 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
   model.stopTraining = false;
   
   const callbacks: FitCallbacks = {
-    onEpochEnd: (log) => {
+    onEpochEnd: async (log) => {
         lossHistory.push({epoch: log.epoch, loss: log.loss});
         self.postMessage({
             type: 'progress',
             payload: { epoch: log.epoch, loss: log.loss, gradients: log.gradients },
         });
         
-        // Checkpoint every epoch
         if (model && vocabData) {
             const checkpointJson = serializeModel(model, vocabData, lossHistory);
-            localStorage.setItem('wordwise_checkpoint', checkpointJson);
+            await saveCheckpoint(checkpointJson);
         }
         return model?.stopTraining || false;
     }
@@ -190,7 +205,6 @@ async function trainStreamChunk(payload: { chunk: string }) {
 
     const words = streamingCorpusBuffer.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
     
-    // Ensure we have enough data to form at least one sequence
     const seqLen = (model as any).seqLen || 1;
     if (words.length < seqLen) return;
 
@@ -199,12 +213,11 @@ async function trainStreamChunk(payload: { chunk: string }) {
        targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
     };
     
-    // Keep the last part of the buffer that is smaller than a full sequence, for the next chunk
     const leftoverWords = words.length % seqLen;
     streamingCorpusBuffer = words.slice(-leftoverWords).join(' ');
 
     const callbacks: FitCallbacks = {
-        onEpochEnd: (log) => {
+        onEpochEnd: async (log) => {
             lossHistory.push({epoch: log.epoch, loss: log.loss});
             self.postMessage({
                 type: 'progress',
@@ -212,13 +225,12 @@ async function trainStreamChunk(payload: { chunk: string }) {
             });
              if (model && vocabData) {
                 const checkpointJson = serializeModel(model, vocabData, lossHistory);
-                localStorage.setItem('wordwise_checkpoint', checkpointJson);
+                await saveCheckpoint(checkpointJson);
             }
             return model?.stopTraining || false;
         }
     };
     
-    // For streaming, we typically do one pass (epoch) over the new data
     const streamOptions = { ...trainingOptions, epochs: trainingOptions.epochs + 1 };
     
     await model.fit(trainingData.inputs, trainingData.targets, streamOptions, callbacks);
@@ -255,12 +267,11 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
         let topPredictions: any[] = [];
 
         if (model instanceof WordWiseModel) {
-            // LSTM generation is stateful and one-word-at-a-time, not implemented here for streaming
             throw new Error("Streaming generation for LSTM not implemented in this worker.");
         } else if (model instanceof TransformerModel || model instanceof FlowNetModel) {
             const currentSequenceIndices = currentWordSequence.slice(-model.seqLen).map(w => wordToIndex.get(w) || 0);
             while(currentSequenceIndices.length < model.seqLen) {
-                currentSequenceIndices.unshift(0); // Pad with <unk>
+                currentSequenceIndices.unshift(0);
             }
             const inputTensor = new Tensor(currentSequenceIndices, [1, model.seqLen]);
             const { outputLogits } = model.forward(inputTensor);
@@ -273,8 +284,8 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
         }
         
         if (chosenWord === '<unk>' || chosenWord === 'вопрос' || chosenWord === 'ответ') {
-            if (chosenWord === '<unk>') break; // Stop on unknown
-            continue; // Skip special tokens but continue generating
+            if (chosenWord === '<unk>') break;
+            continue;
         }
         
         currentWordSequence.push(chosenWord);
@@ -287,7 +298,6 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
                 predictions: topPredictions
             }
         });
-        // Allow the event loop to process messages
         await new Promise(resolve => setTimeout(resolve, 50)); 
     }
 
@@ -296,3 +306,5 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
 
 
 self.postMessage({ type: 'worker-ready' });
+
+    
