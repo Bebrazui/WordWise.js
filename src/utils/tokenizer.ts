@@ -65,7 +65,7 @@ export function getWordFromPrediction(
   indexToWord: Map<number, string>,
   temperature: number = 1.0,
   generatedSequence: string[] = [],
-  repetitionPenalty: number = 1.2
+  repetitionPenalty: number = 1.5 // Увеличим штраф по умолчанию
 ): { chosenWord: string; topPredictions: { word: string; probability: number }[] } {
   if (predictionLogits.shape.length !== 2 || predictionLogits.shape[0] !== 1) {
     throw new Error(`Prediction tensor for word selection must be [1, vocabSize]. Got [${predictionLogits.shape}]`);
@@ -81,6 +81,10 @@ export function getWordFromPrediction(
       // Понижаем логиты для уже сгенерированных слов
       // Если логит положительный, делим на штраф; если отрицательный, умножаем
       logits[i] = logits[i] > 0 ? logits[i] / repetitionPenalty : logits[i] * repetitionPenalty;
+    }
+     // Дополнительно штрафуем спец-токены
+    if (word === '<unk>' || word === 'вопрос' || word === 'ответ') {
+        logits[i] -= 10;
     }
   }
 
@@ -104,7 +108,7 @@ export function getWordFromPrediction(
 
   // Нормализуем для получения вероятностей
   for (let j = 0; j < vocabSize; j++) {
-    adjustedProbs[j] /= sumExp;
+    adjustedProbs[j] = isFinite(sumExp) && sumExp > 0 ? adjustedProbs[j] / sumExp : 1/vocabSize;
   }
 
   // --- 3. Находим топ-5 предсказаний для визуализации (уже с учетом штрафов и температуры) ---
@@ -122,21 +126,20 @@ export function getWordFromPrediction(
   let cumulativeProbability = 0;
   let predictedIndex = -1;
 
-  for (let j = 0; j < vocabSize; j++) {
-    cumulativeProbability += adjustedProbs[j];
+  // Используем отсортированные вероятности для большей стабильности сэмплирования
+  for (const pred of allPredictions) {
+    cumulativeProbability += pred.probability;
     if (randomValue <= cumulativeProbability) {
-      predictedIndex = j;
+      predictedIndex = pred.index;
       break;
     }
   }
 
   if (predictedIndex === -1) {
-    predictedIndex = 0; // Fallback to <unk>
+    predictedIndex = topPredictions[0]?.index || 0; // Fallback to the top prediction or <unk>
   }
 
   const chosenWord = indexToWord.get(predictedIndex) || '<unk>';
 
   return { chosenWord, topPredictions };
 }
-
-    
