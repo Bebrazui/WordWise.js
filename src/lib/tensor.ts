@@ -464,44 +464,44 @@ export class Tensor {
   }
   
   slice(begin: number[], size: number[]): Tensor {
+    if (begin.length !== this.shape.length || size.length !== this.shape.length) {
+        throw new Error("Begin and size arrays must have the same length as the tensor's shape.");
+    }
     const resultShape = [...size];
     const resultSize = resultShape.reduce((a, b) => a * b, 1);
     const resultData = new Float32Array(resultSize);
     
     const srcStrides = this.getStrides(this.shape);
     const dstStrides = this.getStrides(resultShape);
-    
-    const recursiveCopy = (dim: number, srcOffset: number, dstOffset: number) => {
-        if (dim === begin.length) {
-            resultData[dstOffset] = this.data[srcOffset];
-            return;
-        }
-        const currentDstStride = dstStrides[dim] || 1;
-        for (let i = 0; i < size[dim]; i++) {
-            recursiveCopy(dim + 1, srcOffset + (begin[dim] + i) * srcStrides[dim], dstOffset + i * currentDstStride);
-        }
-    };
-    recursiveCopy(0, 0, 0);
 
+    // This is an iterative approach to slice, which is less prone to stack overflow and easier to debug.
+    const indices = new Array(this.shape.length).fill(0);
+    for (let i = 0; i < resultSize; i++) {
+        // Calculate current source and destination indices from flat index `i`
+        let dst_flat_idx = i;
+        let src_flat_idx = 0;
+        for (let d = 0; d < resultShape.length; d++) {
+            const index_in_dim = Math.floor(dst_flat_idx / dstStrides[d]);
+            dst_flat_idx %= dstStrides[d];
+            src_flat_idx += (begin[d] + index_in_dim) * srcStrides[d];
+        }
+        resultData[i] = this.data[src_flat_idx];
+    }
+    
     const result = new Tensor(resultData, resultShape);
     if (!this._isDetached) {
         result._parents.push({
             tensor: this,
             gradFn: (grad) => {
                 const fullGrad = Tensor.zeros(this.shape);
-                const gradStrides = this.getStrides(grad.shape);
-                
-                const recursiveAdd = (dim: number, srcOffset: number, dstOffset: number) => {
-                    if (dim === begin.length) {
-                        fullGrad.data[dstOffset] += grad.data[srcOffset];
-                        return;
+                for (let i = 0; i < resultSize; i++) {
+                    let src_flat_idx = 0;
+                     for (let d = 0; d < resultShape.length; d++) {
+                        const index_in_dim = Math.floor(i / dstStrides[d]) % resultShape[d];
+                        src_flat_idx += (begin[d] + index_in_dim) * srcStrides[d];
                     }
-                    const currentSrcStride = gradStrides[dim] || 1;
-                    for (let i = 0; i < size[dim]; i++) {
-                       recursiveAdd(dim + 1, srcOffset + i * currentSrcStride, dstOffset + (begin[dim] + i) * srcStrides[dim]);
-                    }
-                };
-                recursiveAdd(0, 0, 0);
+                    fullGrad.data[src_flat_idx] += grad.data[i];
+                }
                 return fullGrad;
             }
         });

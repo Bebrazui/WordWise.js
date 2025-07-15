@@ -20,43 +20,34 @@ type Batch = {
  * @param targetTensors Array of target tensors (one-hot vectors).
  * @param batchSize The desired batch size.
  * @param seqLen The fixed sequence length for the model.
- * @param useOverlapping For Transformer, sequences can overlap. For RNN, they shouldn't.
  * @returns An array of batches (plain objects for worker compatibility).
  */
 export function createSequenceBatches(
     inputTensors: Tensor[],
     targetTensors: Tensor[],
     batchSize: number,
-    seqLen: number,
-    useOverlapping: boolean = true
+    seqLen: number
 ): Batch[] {
     const batches: Batch[] = [];
-    const totalItems = inputTensors.length;
+    const totalWords = inputTensors.length;
     
     // The model needs at least seqLen + 1 items to create one input/target pair.
-    if (totalItems <= seqLen) {
+    if (totalWords <= seqLen) {
         console.warn("Not enough data to create even a single sequence.");
         return [];
     }
     
     const vocabSize = targetTensors[0].shape[targetTensors[0].shape.length - 1];
-    const step = useOverlapping ? 1 : seqLen;
     
-    const sequences: {inputs: number[], targets: number[][]}[] = [];
-
     // 1. Create all possible (input -> target) sequences from the text
-    // The target for a sequence is the same sequence, shifted by one word.
-    for (let i = 0; i < totalItems - seqLen; i += step) {
+    const sequences: {inputs: number[], targets: number[][]}[] = [];
+    for (let i = 0; i <= totalWords - seqLen - 1; i++) {
         const inputSeqTensors = inputTensors.slice(i, i + seqLen);
-        // CRITICAL FIX: The target sequence is shifted by one position.
         const targetSeqTensors = targetTensors.slice(i + 1, i + seqLen + 1);
 
-        // Ensure we have a complete pair
-        if (inputSeqTensors.length === seqLen && targetSeqTensors.length === seqLen) {
-             const inputSeq = inputSeqTensors.map(t => t.data[0]);
-             const targetSeq = targetSeqTensors.map(t => Array.from(t.data));
-             sequences.push({ inputs: inputSeq, targets: targetSeq });
-        }
+        const inputSeq = inputSeqTensors.map(t => t.data[0]);
+        const targetSeq = targetSeqTensors.map(t => Array.from(t.data));
+        sequences.push({ inputs: inputSeq, targets: targetSeq });
     }
 
     if (sequences.length === 0) {
@@ -146,4 +137,3 @@ export function createImageBatches(inputTensors: Tensor[], targetTensors: Tensor
 
   return batches;
 }
-

@@ -65,7 +65,7 @@ abstract class BaseModelClass {
         const totalEpochs = options.epochs;
 
         const seqLen = (this as any).seqLen || 1;
-        const batches = createSequenceBatches(inputs, targets, options.batchSize, seqLen, this.type === 'transformer' || this.type === 'flownet');
+        const batches = createSequenceBatches(inputs, targets, options.batchSize, seqLen);
 
         if (batches.length === 0) {
             console.warn("Could not create batches. Check your data and sequence length.");
