@@ -196,45 +196,9 @@ export class Tensor {
    * @returns Новый Tensor с результатом вычитания.
    */
   sub(other: Tensor): Tensor {
-    // Simplified broadcasting for scalar
-    if (other.size === 1) {
-        const scalar = other.data[0];
-        const resultData = this.data.map(val => val - scalar);
-        const result = new Tensor(resultData, this.shape);
-        // Autograd part...
-        return result;
-    }
-    
-    // Broadcasting for [M, N] - [1, N]
-    if (this.shape.length === 2 && other.shape.length === 2 && this.shape[0] > 1 && other.shape[0] === 1 && this.shape[1] === other.shape[1]) {
-        const resultData = new Float32Array(this.size);
-        const [numRows, numCols] = this.shape;
-        for (let i = 0; i < numRows; i++) {
-            for (let j = 0; j < numCols; j++) {
-                resultData[i * numCols + j] = this.data[i * numCols + j] - other.data[j];
-            }
-        }
-        const result = new Tensor(resultData, this.shape);
-        // Autograd part would be needed here for a full implementation
-        return result;
-    }
-
-
-    if (!this.shape.every((dim, i) => dim === other.shape[i])) {
-      throw new Error("Tensors must have the same shape for subtraction.");
-    }
-    const resultData = new Float32Array(this.size);
-    for (let i = 0; i < this.size; i++) {
-      resultData[i] = this.data[i] - other.data[i];
-    }
-    const result = new Tensor(resultData, this.shape);
-    if (!this._isDetached && !other._isDetached) {
-      result._parents.push(
-        { tensor: this, gradFn: (grad) => grad },
-        { tensor: other, gradFn: (grad) => new Tensor(grad.data.map(g => -g), grad.shape) }
-      );
-    }
-    return result;
+    // Re-use `add` logic by negating `other`
+    const negativeOther = other.mul(new Tensor([-1], [1]));
+    return this.add(negativeOther);
   }
 
   /**
