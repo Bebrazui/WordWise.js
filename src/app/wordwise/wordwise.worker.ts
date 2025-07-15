@@ -83,7 +83,7 @@ async function loadModel(payload: {modelJson: string}) {
     vocabData = loaded.vocabData;
     lossHistory = loaded.lossHistory || [];
 
-    const wordsForSampling = ('vocab' in vocabData && vocabData.vocab) ? vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2) : [];
+    const wordsForSampling = ('vocab' in vocabData && vocabData.vocab) ? vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ', '<eos>'].includes(w) && w.length > 2) : [];
     const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
     
     self.postMessage({
@@ -118,7 +118,7 @@ async function initialize(payload: any) {
     throw new Error('Unknown initialization type');
   }
   
-  const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
+  const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ', '<eos>'].includes(w) && w.length > 2);
   const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
 
   self.postMessage({ 
@@ -141,7 +141,7 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
   }
   const { numEpochs, learningRate, batchSize, fullCorpus } = payload;
   lossHistory = payload.lossHistory || [];
-  const words = fullCorpus.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
+  const words = (fullCorpus.toLowerCase().match(/<eos>|[a-zA-Zа-яА-ЯёЁ]+/g) || []);
   const trainingData = {
      inputs: wordsToInputTensors(words, vocabData.wordToIndex),
      targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
@@ -203,7 +203,7 @@ async function trainStreamChunk(payload: { chunk: string }) {
 
     streamingCorpusBuffer += payload.chunk;
 
-    const words = streamingCorpusBuffer.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
+    const words = streamingCorpusBuffer.toLowerCase().match(/<eos>|[a-zA-Zа-яА-ЯёЁ]+/g) || [];
     
     const seqLen = (model as any).seqLen || 1;
     if (words.length < seqLen) return;
@@ -309,6 +309,10 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
         chosenWord = result.chosenWord;
         topPredictions = result.topPredictions;
         
+        if (chosenWord === '<eos>') {
+            break; // Stop generation if we produce the end-of-sequence token
+        }
+
         if (chosenWord === '<unk>' || chosenWord === 'вопрос' || chosenWord === 'ответ') {
             if (chosenWord === '<unk>') break; // Stop if we generate unknown token
             continue; // Skip special tokens but continue generating

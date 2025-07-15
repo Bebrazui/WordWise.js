@@ -1,3 +1,4 @@
+
 // src/utils/tokenizer.ts
 import { Tensor } from '../lib/tensor';
 import { softmax } from '../lib/layers';
@@ -8,8 +9,8 @@ import { softmax } from '../lib/layers';
  * @returns Объект со словарем (массив слов), маппингами слов в индексы и обратно, и размером словаря.
  */
 export function buildTextVocabulary(text: string): { vocab: string[]; wordToIndex: Map<string, number>; indexToWord: Map<number, string>; vocabSize: number } {
-  // Улучшенная токенизация: разбиваем на слова (латиница и кириллица), переводим в нижний регистр
-  const words = text.toLowerCase().match(/[a-zA-Zа-яА-ЯёЁ]+/g) || [];
+  // Улучшенная токенизация: разбиваем на слова (латиница и кириллица) или <eos> токен, переводим в нижний регистр
+  const words = text.toLowerCase().match(/<eos>|[a-zA-Zа-яА-ЯёЁ]+/g) || [];
   const uniqueWords = Array.from(new Set(words));
   const vocab = ['<unk>', ...uniqueWords]; // Добавляем токен для неизвестных слов на 0-й позиции
   const wordToIndex = new Map(vocab.map((word, i) => [word, i]));
