@@ -29,6 +29,14 @@ export interface FitCallbacks {
     onEpochEnd?: (log: { epoch: number; loss: number; gradients: { layer: string; avgGrad: number }[] }) => boolean | void;
 }
 
+export interface FitOptions {
+    epochs: number; 
+    batchSize: number;
+    learningRate: number;
+    initialEpoch?: number;
+}
+
+
 // --- Base Model Class ---
 abstract class BaseModelClass {
     abstract type: 'text' | 'image' | 'transformer' | 'flownet';
@@ -48,7 +56,7 @@ abstract class BaseModelClass {
     async fit(
         inputs: Tensor[],
         targets: Tensor[],
-        options: { epochs: number; batchSize: number; learningRate: number; initialEpoch?: number },
+        options: FitOptions,
         callbacks?: FitCallbacks
     ): Promise<void> {
 
@@ -63,7 +71,7 @@ abstract class BaseModelClass {
             return;
         }
 
-        for (let epoch = 0; epoch < options.epochs; epoch++) {
+        for (let epoch = startEpoch; epoch < startEpoch + options.epochs; epoch++) {
             if (this.stopTraining) break;
             let epochLoss = 0;
 
@@ -89,7 +97,7 @@ abstract class BaseModelClass {
             if (this.stopTraining) break;
 
             const avgEpochLoss = epochLoss / batches.length;
-            const currentEpoch = startEpoch + epoch + 1;
+            const currentEpoch = epoch + 1;
 
             if (callbacks?.onEpochEnd) {
                 const gradientInfo = Object.entries(this.getLayers()).flatMap(([layerName, layerOrLayers]) => {

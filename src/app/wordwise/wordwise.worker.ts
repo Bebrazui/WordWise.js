@@ -2,17 +2,14 @@
 // src/app/wordwise/wordwise.worker.ts
 /// <reference lib="webworker" />
 
-import { WordWiseModel, TransformerModel, FlowNetModel, serializeModel, deserializeModel, AnyModel, VocabData, FitCallbacks } from '@/lib/model';
+import { WordWiseModel, TransformerModel, FlowNetModel, serializeModel, deserializeModel, AnyModel, VocabData, FitCallbacks, FitOptions } from '@/lib/model';
 import { buildTextVocabulary, wordsToInputTensors, wordsToTargetTensors, getWordFromPrediction } from '@/utils/tokenizer';
 import { Tensor } from '@/lib/tensor';
 
 let model: AnyModel | null = null;
 let vocabData: VocabData | null = null;
-let trainingData: {
-    inputs: Tensor[],
-    targets: Tensor[],
-} | null = null;
-let modelType: 'lstm' | 'transformer' | 'flownet' = 'flownet';
+let trainingOptions: FitOptions | null = null;
+let streamingCorpusBuffer = '';
 
 
 /**
@@ -28,6 +25,15 @@ self.onmessage = async (event: MessageEvent) => {
         break;
       case 'train':
         await train(payload);
+        break;
+      case 'train-stream-start':
+        trainStreamStart(payload);
+        break;
+      case 'train-stream-chunk':
+        await trainStreamChunk(payload);
+        break;
+      case 'train-stream-end':
+        await trainStreamEnd();
         break;
       case 'stop':
          if (model) {
@@ -52,29 +58,6 @@ async function loadModel(payload: {modelJson: string, textCorpus: string}) {
     const loaded = deserializeModel(modelJson);
     model = loaded.model;
     vocabData = loaded.vocabData;
-    
-    trainingData = null;
-
-    if ('vocab' in vocabData && textCorpus) {
-        const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
-        trainingData = {
-           inputs: wordsToInputTensors(words, vocabData.wordToIndex),
-           targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
-        };
-    } else {
-        throw new Error("Cannot load a model without a text corpus to create training data.");
-    }
-
-
-    if (model instanceof TransformerModel) {
-        modelType = 'transformer';
-    } else if (model instanceof WordWiseModel) {
-        modelType = 'lstm';
-    } else if (model instanceof FlowNetModel) {
-        modelType = 'flownet';
-    } else {
-        throw new Error("Unknown model type after loading.");
-    }
 
     const wordsForSampling = ('vocab' in vocabData && vocabData.vocab) ? vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2) : [];
     const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
@@ -94,27 +77,20 @@ async function loadModel(payload: {modelJson: string, textCorpus: string}) {
  */
 async function initialize(payload: any) {
   const { modelType: newModelType, textCorpus } = payload;
-  modelType = newModelType;
   vocabData = buildTextVocabulary(textCorpus);
   
-  if (modelType === 'lstm') {
+  if (newModelType === 'lstm') {
     const { embeddingDim, hiddenSize } = payload;
     model = new WordWiseModel(vocabData.vocabSize, embeddingDim, hiddenSize);
-  } else if (modelType === 'transformer') {
+  } else if (newModelType === 'transformer') {
     const { dModel, numHeads, dff, numLayers, seqLen } = payload;
     model = new TransformerModel(vocabData.vocabSize, seqLen, dModel, numLayers, numHeads, dff);
-  } else if (modelType === 'flownet') {
+  } else if (newModelType === 'flownet') {
     const { embeddingDim, numLayers, seqLen } = payload;
     model = new FlowNetModel(vocabData.vocabSize, seqLen, embeddingDim, numLayers);
   } else {
     throw new Error('Unknown initialization type');
   }
-
-  const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
-  trainingData = {
-     inputs: wordsToInputTensors(words, vocabData.wordToIndex),
-     targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
-  };
   
   const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
   const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
@@ -122,7 +98,7 @@ async function initialize(payload: any) {
   self.postMessage({ 
     type: 'initialized', 
     payload: { 
-      type: modelType,
+      type: newModelType,
       vocabSize: vocabData.vocabSize,
       sampleWords: shuffled.slice(0, 4)
     } 
@@ -130,26 +106,27 @@ async function initialize(payload: any) {
 }
 
 /**
- * Trains the model using the model.fit() method.
+ * Trains the model using the model.fit() method with the full corpus.
  */
-async function train(payload: { numEpochs: number, learningRate: number, batchSize: number, lossHistory: {epoch: number, loss: number}[] }) {
-  if (!model || !vocabData || !trainingData) {
+async function train(payload: { numEpochs: number, learningRate: number, batchSize: number, fullCorpus: string }) {
+  if (!model || !vocabData || !('wordToIndex' in vocabData)) {
     self.postMessage({ type: 'error', payload: { message: 'Model is not initialized or no training data is available.' } });
     return;
   }
+  const { numEpochs, learningRate, batchSize, fullCorpus } = payload;
+  const words = fullCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
+  const trainingData = {
+     inputs: wordsToInputTensors(words, vocabData.wordToIndex),
+     targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
+  };
 
-  const { numEpochs, learningRate, batchSize, lossHistory } = payload;
   model.stopTraining = false;
   
   const callbacks: FitCallbacks = {
     onEpochEnd: (log) => {
         self.postMessage({
             type: 'progress',
-            payload: {
-                epoch: log.epoch,
-                loss: log.loss,
-                gradients: log.gradients,
-            },
+            payload: { epoch: log.epoch, loss: log.loss, gradients: log.gradients },
         });
         return model?.stopTraining || false;
     }
@@ -159,18 +136,80 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
       epochs: numEpochs,
       batchSize,
       learningRate,
-      initialEpoch: lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch : 0
   }, callbacks);
   
   if (model.stopTraining && model && vocabData) {
-       const lastEpoch = lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch : 0;
        const modelJson = serializeModel(model, vocabData);
-       self.postMessage({ type: 'training-stopped', payload: { epoch: lastEpoch, modelJson } });
+       self.postMessage({ type: 'training-stopped', payload: { epoch: 0, modelJson } });
        return;
   }
   
   const modelJson = serializeModel(model, vocabData);
   self.postMessage({ type: 'training-complete', payload: { modelJson } });
+}
+
+
+// --- Stream Training Functions ---
+
+function trainStreamStart(payload: FitOptions) {
+    if (!model || !vocabData) {
+        self.postMessage({ type: 'error', payload: { message: 'Model not initialized for streaming.' }});
+        return;
+    }
+    trainingOptions = payload;
+    streamingCorpusBuffer = '';
+    model.stopTraining = false;
+}
+
+async function trainStreamChunk(payload: { chunk: string }) {
+    if (!model || !vocabData || !trainingOptions || !('wordToIndex' in vocabData)) return;
+
+    streamingCorpusBuffer += payload.chunk;
+
+    const words = streamingCorpusBuffer.toLowerCase().match(/[a-zа-яё]+/g) || [];
+    
+    // Ensure we have enough data to form at least one sequence
+    const seqLen = (model as any).seqLen || 1;
+    if (words.length < seqLen) return;
+
+    const trainingData = {
+       inputs: wordsToInputTensors(words, vocabData.wordToIndex),
+       targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
+    };
+    
+    // Keep the last part of the buffer that is smaller than a full sequence, for the next chunk
+    const leftoverWords = words.length % seqLen;
+    streamingCorpusBuffer = words.slice(-leftoverWords).join(' ');
+
+    const callbacks: FitCallbacks = {
+        onEpochEnd: (log) => {
+            self.postMessage({
+                type: 'progress',
+                payload: { epoch: log.epoch, loss: log.loss, gradients: log.gradients },
+            });
+            return model?.stopTraining || false;
+        }
+    };
+    
+    // For streaming, we typically do one pass (epoch) over the new data
+    const streamOptions = { ...trainingOptions, epochs: 1 };
+    
+    await model.fit(trainingData.inputs, trainingData.targets, streamOptions, callbacks);
+}
+
+async function trainStreamEnd() {
+    if (model?.stopTraining && model && vocabData) {
+        const modelJson = serializeModel(model, vocabData);
+        self.postMessage({ type: 'training-stopped', payload: { epoch: 0, modelJson } }); // epoch is not tracked globally in streaming
+        return;
+    }
+
+    if (model && vocabData) {
+      const modelJson = serializeModel(model, vocabData);
+      self.postMessage({ type: 'training-complete', payload: { modelJson } });
+    }
+    trainingOptions = null;
+    streamingCorpusBuffer = '';
 }
 
 
@@ -230,3 +269,4 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
 self.postMessage({ type: 'worker-ready' });
 
   
+

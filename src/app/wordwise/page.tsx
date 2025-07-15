@@ -4,7 +4,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Info, Upload, Download, Settings, TestTube2, CheckCircle, ImagePlus, FileText, BrainCircuit } from 'lucide-react';
+import { Info, Upload, Download, Settings, TestTube2, CheckCircle, ImagePlus, FileText, BrainCircuit, Zap } from 'lucide-react';
 
 import { getWordFromPrediction } from '../../utils/tokenizer';
 import { imageToTensor } from '../../utils/image-processor';
@@ -34,6 +34,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion"
+import { Switch } from '@/components/ui/switch';
 
 
 const defaultCorpus = `вопрос: привет ответ: привет как твои дела
@@ -84,6 +85,7 @@ export default function WordwisePage() {
   const [learningRate, setLearningRate] = useState(0.01);
   const [numEpochs, setNumEpochs] = useState(500);
   const [batchSize, setBatchSize] = useState(4);
+  const [streamTraining, setStreamTraining] = useState(true);
   
   // LSTM params
   const [embeddingDim, setEmbeddingDim] = useState(64);
@@ -134,6 +136,7 @@ export default function WordwisePage() {
           setIsTrained(false);
           setLossHistory([]);
           setGradientHistory([]);
+          setTrainingProgress(0);
           setLatestPredictions([]);
           setSampleWords(payload.sampleWords || []);
           setOutput(`Модель (${payload.type}) инициализирована. Размер словаря: ${payload.vocabSize}.`);
@@ -145,6 +148,7 @@ export default function WordwisePage() {
           setIsTrained(true); // A loaded model is considered trained.
           setLossHistory([]);
           setGradientHistory([]);
+          setTrainingProgress(0);
           setModelArch(payload.architecture.type);
           setSampleWords(payload.sampleWords || []);
 
@@ -205,7 +209,7 @@ export default function WordwisePage() {
     return () => {
       worker.terminate();
     };
-  }, [setModelJson, toast, numEpochs, trainingData]);
+  }, [setModelJson, toast, numEpochs]);
 
 
   const initializeModel = useCallback(() => {
@@ -247,16 +251,40 @@ export default function WordwisePage() {
     setIsTraining(true);
     setStatus('Начинается обучение...');
     setTrainingProgress(0);
+    setLossHistory([]);
 
-    workerRef.current?.postMessage({
-      type: 'train',
-      payload: { 
+    const commonPayload = { 
         numEpochs,
         learningRate,
         batchSize,
-        lossHistory
-      }
-    });
+    };
+
+    if (streamTraining && modelArch === 'flownet' && trainingData.type === 'text') {
+        // Потоковое обучение
+        setStatus('Начинается потоковое обучение...');
+        workerRef.current?.postMessage({ type: 'train-stream-start', payload: commonPayload });
+
+        const corpus = trainingData.corpus;
+        const chunkSize = 2048; // Отправляем по 2KB текста за раз
+        for (let i = 0; i < corpus.length; i += chunkSize) {
+            const chunk = corpus.substring(i, i + chunkSize);
+            workerRef.current?.postMessage({ type: 'train-stream-chunk', payload: { chunk } });
+            // Небольшая задержка, чтобы не забивать очередь сообщений
+            await new Promise(res => setTimeout(res, 5));
+        }
+        workerRef.current?.postMessage({ type: 'train-stream-end' });
+
+    } else {
+        // Обычное обучение
+        workerRef.current?.postMessage({
+          type: 'train',
+          payload: { 
+            ...commonPayload,
+            lossHistory,
+            fullCorpus: trainingData.type === 'text' ? trainingData.corpus : ''
+          }
+        });
+    }
   };
 
   const applyToChat = () => {
@@ -515,6 +543,15 @@ export default function WordwisePage() {
                             <div className="mt-4">
                                <Label htmlFor="seqLen">Длина последовательности</Label>
                                <Input id="seqLen" type="number" value={seqLen} onChange={e => setSeqLen(parseInt(e.target.value, 10))} min="4" step="4" disabled={isTraining || isInitialized}/>
+                            </div>
+                          )}
+                          {modelArch === 'flownet' && (
+                            <div className="flex items-center space-x-2 mt-4">
+                                <Switch id="stream-training" checked={streamTraining} onCheckedChange={setStreamTraining} disabled={isTraining || isInitialized} />
+                                <Label htmlFor="stream-training" className="flex items-center gap-2">
+                                  <Zap className="h-4 w-4 text-orange-500" />
+                                  Потоковое обучение (для больших данных)
+                                </Label>
                             </div>
                           )}
                        </div>
