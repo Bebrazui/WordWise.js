@@ -62,6 +62,7 @@ abstract class BaseModelClass {
 
         const optimizer = new SGD(options.learningRate);
         const startEpoch = options.initialEpoch || 0;
+        const totalEpochs = options.epochs;
 
         const seqLen = (this as any).seqLen || 1;
         const batches = createSequenceBatches(inputs, targets, options.batchSize, seqLen, this.type === 'transformer' || this.type === 'flownet');
@@ -71,7 +72,7 @@ abstract class BaseModelClass {
             return;
         }
 
-        for (let epoch = startEpoch; epoch < startEpoch + options.epochs; epoch++) {
+        for (let epoch = startEpoch; epoch < totalEpochs; epoch++) {
             if (this.stopTraining) break;
             let epochLoss = 0;
 
@@ -344,7 +345,7 @@ export class FlowNetModel extends BaseModelClass {
 export type AnyModel = WordWiseModel | TransformerModel | FlowNetModel;
 
 
-export function serializeModel(model: AnyModel, vocabData: VocabData): string {
+export function serializeModel(model: AnyModel, vocabData: VocabData, lossHistory?: any[]): string {
     const layersData: { [key: string]: any } = {};
 
     Object.entries(model.getLayers()).forEach(([layerName, layerOrLayers]) => {
@@ -380,6 +381,7 @@ export function serializeModel(model: AnyModel, vocabData: VocabData): string {
     const dataToSave = {
         architecture,
         weights: layersData,
+        lossHistory: lossHistory || [],
         ...vocabInfo
     };
 
@@ -387,14 +389,14 @@ export function serializeModel(model: AnyModel, vocabData: VocabData): string {
 }
 
 
-export function deserializeModel(jsonString: string): { model: AnyModel, vocabData: VocabData } {
+export function deserializeModel(jsonString: string): { model: AnyModel, vocabData: VocabData, lossHistory: any[] } {
     const savedData = JSON.parse(jsonString);
 
     if (!savedData.architecture || !savedData.weights) {
         throw new Error("Invalid model file format: missing architecture or weights.");
     }
     
-    const { architecture, weights } = savedData;
+    const { architecture, weights, lossHistory } = savedData;
     let model: AnyModel;
     let vocabData: VocabData;
 
@@ -406,8 +408,9 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
         const vocabSize = vocab.length;
         vocabData = { vocab, wordToIndex, indexToWord, vocabSize };
         
+        // This check is too strict for fine-tuning, so we just warn.
         if (vocabSize !== architecture.vocabSize) {
-             console.warn(`Vocabulary size mismatch. Loaded model has ${architecture.vocabSize}, but current vocab is ${vocabSize}. This might be OK if you are fine-tuning.`);
+             console.warn(`Vocabulary size mismatch. Loaded model has ${architecture.vocabSize}, but current vocab is ${vocabSize}.`);
         }
         
         if (architecture.type === 'lstm') {
@@ -451,7 +454,5 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
         });
     });
 
-    return { model, vocabData };
+    return { model, vocabData, lossHistory: lossHistory || [] };
 }
-
-  

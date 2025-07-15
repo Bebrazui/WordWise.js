@@ -4,7 +4,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Info, Upload, Download, Settings, TestTube2, CheckCircle, ImagePlus, FileText, BrainCircuit, Zap } from 'lucide-react';
+import { Info, Upload, Download, Settings, TestTube2, CheckCircle, ImagePlus, FileText, BrainCircuit, Zap, Trash2 } from 'lucide-react';
 
 import { getWordFromPrediction } from '../../utils/tokenizer';
 import { imageToTensor } from '../../utils/image-processor';
@@ -118,16 +118,24 @@ export default function WordwisePage() {
       switch (type) {
         case 'worker-ready':
           setStatus('Worker готов. Можно инициализировать модель.');
-          if (modelJson) {
-             console.log("Found model in zustand, sending to worker to load...");
-             const currentCorpus = (trainingData as TrainingDataType & { type: 'text' }).corpus;
-             workerRef.current?.postMessage({
-                type: 'load-model',
-                payload: {
-                    modelJson,
-                    textCorpus: currentCorpus
-                }
-             });
+          // Check for a checkpoint in localStorage
+          const checkpointJson = localStorage.getItem('wordwise_checkpoint');
+          if (checkpointJson) {
+            toast({
+                title: "Обнаружена сохраненная сессия",
+                description: "Хотите восстановить прогресс обучения?",
+                action: (
+                    <Button variant="secondary" size="sm" onClick={() => {
+                        workerRef.current?.postMessage({
+                            type: 'load-model',
+                            payload: { modelJson: checkpointJson }
+                        });
+                        toast({ title: "Восстановление...", description: "Загружаем модель из чекпоинта." });
+                    }}>
+                        Восстановить
+                    </Button>
+                ),
+            });
           }
           break;
         case 'initialized':
@@ -146,7 +154,7 @@ export default function WordwisePage() {
           setOutput(`Загружена модель ${payload.architecture.type}.`);
           setIsInitialized(true);
           setIsTrained(true); // A loaded model is considered trained.
-          setLossHistory([]);
+          setLossHistory(payload.lossHistory || []);
           setGradientHistory([]);
           setTrainingProgress(0);
           setModelArch(payload.architecture.type);
@@ -173,7 +181,7 @@ export default function WordwisePage() {
           setLossHistory(prev => [...prev, { epoch: payload.epoch, loss: payload.loss }]);
           setGradientHistory(payload.gradients);
           setStatus(`Обучение: Эпоха ${payload.epoch}, Потеря: ${payload.loss.toFixed(6)}`);
-          setTrainingProgress((payload.epoch / numEpochs) * 100);
+          setTrainingProgress((payload.epoch / (lossHistory.length + numEpochs)) * 100);
           break;
         case 'training-complete':
           setStatus('Обучение завершено. Модель готова к проверке и применению.');
@@ -214,6 +222,8 @@ export default function WordwisePage() {
 
   const initializeModel = useCallback(() => {
     setStatus('Инициализация...');
+    setIsInitialized(false);
+    setIsTrained(false);
     if (trainingData.type === 'text') {
         let params: any;
         switch (modelArch) {
@@ -250,9 +260,7 @@ export default function WordwisePage() {
     if (!isInitialized || isTraining) return;
     setIsTraining(true);
     setStatus('Начинается обучение...');
-    setTrainingProgress(0);
-    setLossHistory([]);
-
+    
     const commonPayload = { 
         numEpochs,
         learningRate,
@@ -262,7 +270,7 @@ export default function WordwisePage() {
     if (streamTraining && modelArch === 'flownet' && trainingData.type === 'text') {
         // Потоковое обучение
         setStatus('Начинается потоковое обучение...');
-        workerRef.current?.postMessage({ type: 'train-stream-start', payload: commonPayload });
+        workerRef.current?.postMessage({ type: 'train-stream-start', payload: {...commonPayload, lossHistory} });
 
         const corpus = trainingData.corpus;
         const chunkSize = 2048; // Отправляем по 2KB текста за раз
@@ -302,7 +310,7 @@ export default function WordwisePage() {
   };
 
   const generateText = (startWord: string) => {
-    if (!isTrained || !modelJson) {
+    if (!isTrained) {
       toast({ title: "Ошибка", description: "Сначала обучите или загрузите текстовую модель.", variant: "destructive" });
       return;
     }
@@ -320,26 +328,35 @@ export default function WordwisePage() {
   };
   
   const handleSaveModel = () => {
-    if (!modelJson) {
-      toast({ title: "Ошибка", description: "Нет модели для сохранения.", variant: "destructive" });
-      return;
-    }
-    try {
-      const blob = new Blob([modelJson], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const modelType = JSON.parse(modelJson).architecture.type;
-      a.download = `wordwise-model-${modelType}-${new Date().toISOString().slice(0,10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast({ title: "Успех", description: "Модель успешно сохранена." });
-    } catch (error) {
-      console.error("Ошибка сохранения модели:", error);
-      toast({ title: "Ошибка сохранения", description: `${error instanceof Error ? error.message : 'Неизвестная ошибка'}`, variant: "destructive" });
-    }
+    workerRef.current?.postMessage({ type: 'request-model' });
+    const listener = (event: MessageEvent) => {
+        if(event.data.type === 'model-response') {
+            const modelJsonContent = event.data.payload.modelJson;
+            if (!modelJsonContent) {
+                toast({ title: "Ошибка", description: "Нет модели для сохранения.", variant: "destructive" });
+                return;
+            }
+            try {
+                const blob = new Blob([modelJsonContent], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                const modelType = JSON.parse(modelJsonContent).architecture.type;
+                a.download = `wordwise-model-${modelType}-${new Date().toISOString().slice(0,10)}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                toast({ title: "Успех", description: "Модель успешно сохранена." });
+            } catch (error) {
+                console.error("Ошибка сохранения модели:", error);
+                toast({ title: "Ошибка сохранения", description: `${error instanceof Error ? error.message : 'Неизвестная ошибка'}`, variant: "destructive" });
+            } finally {
+                workerRef.current?.removeEventListener('message', listener);
+            }
+        }
+    };
+    workerRef.current?.addEventListener('message', listener);
   };
 
   const handleLoadModel = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -353,15 +370,10 @@ export default function WordwisePage() {
             // Validate JSON before sending to worker
             JSON.parse(jsonContent);
             
-            if (trainingData.type !== 'text') {
-                toast({ title: "Ошибка", description: "Загружать можно только текстовые модели.", variant: "destructive"});
-                return;
-            }
-
             // Send to worker to load
             workerRef.current?.postMessage({
                 type: 'load-model',
-                payload: { modelJson: jsonContent, textCorpus: trainingData.corpus }
+                payload: { modelJson: jsonContent }
             });
             toast({ title: "Загрузка", description: "Модель отправлена в воркер для обработки." });
         } catch (error) {
@@ -373,6 +385,13 @@ export default function WordwisePage() {
     reader.readAsText(file);
     event.target.value = '';
   };
+  
+  const handleClearCheckpoint = () => {
+    localStorage.removeItem('wordwise_checkpoint');
+    toast({ title: "Состояние сброшено", description: "Сохраненный чекпоинт обучения удален."});
+    // Maybe also reset the model in the worker?
+    initializeModel();
+  }
 
 
   const renderHyperparameters = () => {
@@ -595,6 +614,9 @@ export default function WordwisePage() {
                     <Input id="load-model-input" type="file" accept=".json" className="sr-only" onChange={handleLoadModel} />
                  </Label>
                </Button>
+               <Button onClick={handleClearCheckpoint} variant="outline" className="col-span-2">
+                  <Trash2 className="mr-2 h-4 w-4" /> Сбросить сохраненное состояние
+               </Button>
             </CardContent>
            </Card>
 
@@ -680,7 +702,3 @@ export default function WordwisePage() {
     </div>
   );
 }
-
-  
-
-    
