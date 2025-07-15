@@ -157,14 +157,26 @@ export class WordWiseModel extends BaseModelClass {
   }
 
   forward(input: Tensor, prevH?: Tensor, prevC?: Tensor): { outputLogits: Tensor, h: Tensor, c: Tensor } {
-    const batchSize = input.shape[0];
-    const h = prevH || Tensor.zeros([batchSize, this.hiddenSize]);
-    const c = prevC || Tensor.zeros([batchSize, this.hiddenSize]);
+    const [batchSize, seqLen] = input.shape;
+    let h = prevH || Tensor.zeros([batchSize, this.hiddenSize]);
+    let c = prevC || Tensor.zeros([batchSize, this.hiddenSize]);
     
-    const embeddedInput = this.embeddingLayer.forward(input);
-    const { h: nextH, c: nextC } = this.lstmCell.forward(embeddedInput.reshape([-1, this.embeddingDim]), h, c);
-    const outputLogits = this.outputLayer.forward(nextH);
-    return { outputLogits, h: nextH, c: nextC };
+    const embedded = this.embeddingLayer.forward(input); // [B, S, D]
+
+    // Process sequence step-by-step
+    for (let t = 0; t < seqLen; t++) {
+        // Get the embedding for the current time step
+        const stepInput = embedded.slice([0, t, 0], [batchSize, 1, this.embeddingDim]).reshape([batchSize, this.embeddingDim]);
+        
+        // Pass through LSTM cell
+        const { h: nextH, c: nextC } = this.lstmCell.forward(stepInput, h, c);
+        h = nextH;
+        c = nextC;
+    }
+    
+    // The final hidden state `h` is the output for the whole sequence
+    const outputLogits = this.outputLayer.forward(h);
+    return { outputLogits, h, c };
   }
 
   getParameters(): Tensor[] {
@@ -454,5 +466,3 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
 
     return { model, vocabData, lossHistory: lossHistory || [] };
 }
-
-    

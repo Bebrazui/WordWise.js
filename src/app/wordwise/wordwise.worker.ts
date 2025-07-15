@@ -261,13 +261,26 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
 
     let currentWordSequence = startWord.toLowerCase().split(' ').filter(Boolean);
     let fullGeneratedText = [...currentWordSequence];
+    
+    let h: Tensor | undefined;
+    let c: Tensor | undefined;
 
     for (let i = 0; i < numWords; i++) {
         let chosenWord: string;
         let topPredictions: any[] = [];
+        let logits: Tensor;
 
         if (model instanceof WordWiseModel) {
-            throw new Error("Streaming generation for LSTM not implemented in this worker.");
+            const lastWord = fullGeneratedText[fullGeneratedText.length - 1];
+            const inputIndex = wordToIndex.get(lastWord) || 0;
+            const inputTensor = new Tensor([inputIndex], [1, 1]); // Batch size 1, seq len 1
+
+            // Pass the state! This is the key fix.
+            const { outputLogits, h: nextH, c: nextC } = model.forward(inputTensor, h, c);
+            h = nextH; // Update state for next iteration
+            c = nextC; // Update state for next iteration
+            logits = outputLogits;
+            
         } else if (model instanceof TransformerModel || model instanceof FlowNetModel) {
             const currentSequenceIndices = currentWordSequence.slice(-model.seqLen).map(w => wordToIndex.get(w) || 0);
             while(currentSequenceIndices.length < model.seqLen) {
@@ -275,13 +288,14 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
             }
             const inputTensor = new Tensor(currentSequenceIndices, [1, model.seqLen]);
             const { outputLogits } = model.forward(inputTensor);
-            const lastTimeStepLogits = outputLogits.slice([0, model.seqLen - 1, 0], [1, 1, vocabData.vocabSize]).reshape([1, vocabData.vocabSize]);
-            const result = getWordFromPrediction(lastTimeStepLogits, indexToWord, temperature, fullGeneratedText);
-            chosenWord = result.chosenWord;
-            topPredictions = result.topPredictions;
+            logits = outputLogits.slice([0, model.seqLen - 1, 0], [1, 1, vocabData.vocabSize]).reshape([1, vocabData.vocabSize]);
         } else {
              throw new Error("Unknown model type for generation.");
         }
+        
+        const result = getWordFromPrediction(logits, indexToWord, temperature, fullGeneratedText);
+        chosenWord = result.chosenWord;
+        topPredictions = result.topPredictions;
         
         if (chosenWord === '<unk>' || chosenWord === 'вопрос' || chosenWord === 'ответ') {
             if (chosenWord === '<unk>') break;
@@ -306,5 +320,3 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
 
 
 self.postMessage({ type: 'worker-ready' });
-
-    
