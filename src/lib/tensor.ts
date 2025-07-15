@@ -204,6 +204,21 @@ export class Tensor {
         // Autograd part...
         return result;
     }
+    
+    // Broadcasting for [M, N] - [1, N]
+    if (this.shape.length === 2 && other.shape.length === 2 && this.shape[0] > 1 && other.shape[0] === 1 && this.shape[1] === other.shape[1]) {
+        const resultData = new Float32Array(this.size);
+        const [numRows, numCols] = this.shape;
+        for (let i = 0; i < numRows; i++) {
+            for (let j = 0; j < numCols; j++) {
+                resultData[i * numCols + j] = this.data[i * numCols + j] - other.data[j];
+            }
+        }
+        const result = new Tensor(resultData, this.shape);
+        // Autograd part would be needed here for a full implementation
+        return result;
+    }
+
 
     if (!this.shape.every((dim, i) => dim === other.shape[i])) {
       throw new Error("Tensors must have the same shape for subtraction.");
@@ -223,49 +238,57 @@ export class Tensor {
   }
 
   /**
-   * Поэлементное умножение двух тензоров. Поддерживает простейший бродкастинг со скаляром.
+   * Поэлементное умножение двух тензоров. Поддерживает бродкастинг.
    * @param other Другой тензор.
    * @returns Новый Tensor с результатом умножения.
    */
   mul(other: Tensor): Tensor {
-    // Простой бродкастинг для скаляров
-    if (this.size === 1) {
-      const resultData = new Float32Array(other.size);
-      for (let i = 0; i < other.size; i++) resultData[i] = this.data[0] * other.data[i];
-      const result = new Tensor(resultData, other.shape);
+    let result: Tensor;
+    if (this.shape.every((dim, i) => dim === other.shape[i])) {
+      // Element-wise multiplication
+      const resultData = new Float32Array(this.size);
+      for (let i = 0; i < this.size; i++) {
+        resultData[i] = this.data[i] * other.data[i];
+      }
+      result = new Tensor(resultData, this.shape);
       if (!this._isDetached && !other._isDetached) {
         result._parents.push(
-          { tensor: this, gradFn: (grad) => new Tensor([grad.data.reduce((sum, val, idx) => sum + val * other.data[idx], 0)], [1]) },
-          { tensor: other, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * this.data[0]), grad.shape) }
+          { tensor: this, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * other.data[i]), grad.shape) },
+          { tensor: other, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * this.data[i]), grad.shape) }
         );
       }
-      return result;
-    } else if (other.size === 1) {
-      const resultData = new Float32Array(this.size);
-      for (let i = 0; i < this.size; i++) resultData[i] = this.data[i] * other.data[0];
-      const result = new Tensor(resultData, this.shape);
-       if (!this._isDetached && !other._isDetached) {
-        result._parents.push(
-          { tensor: this, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * other.data[0]), grad.shape) },
-          { tensor: other, gradFn: (grad) => new Tensor([grad.data.reduce((sum, val, idx) => sum + val * this.data[idx], 0)], [1]) }
-        );
-      }
-      return result;
-    }
+    } else {
+        // Broadcasting logic
+        const broadcastShape = this.getBroadcastShape(this.shape, other.shape);
+        const resultData = new Float32Array(broadcastShape.reduce((a, b) => a * b, 1));
+        
+        const thisStrides = this.getStrides(this.shape);
+        const otherStrides = this.getStrides(other.shape);
+        const resultStrides = this.getStrides(broadcastShape);
 
-    if (!this.shape.every((dim, i) => dim === other.shape[i])) {
-      throw new Error(`Tensors must have compatible shapes for element-wise multiplication: [${this.shape}] vs [${other.shape}]`);
-    }
-    const resultData = new Float32Array(this.size);
-    for (let i = 0; i < this.size; i++) {
-      resultData[i] = this.data[i] * other.data[i];
-    }
-    const result = new Tensor(resultData, this.shape);
-    if (!this._isDetached && !other._isDetached) {
-      result._parents.push(
-        { tensor: this, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * other.data[i]), grad.shape) },
-        { tensor: other, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * this.data[i]), grad.shape) }
-      );
+        for (let i = 0; i < resultData.length; i++) {
+            const indices = this.getIndices(i, resultStrides);
+            const thisIndex = this.getBroadcastIndex(indices, this.shape, broadcastShape, thisStrides);
+            const otherIndex = this.getBroadcastIndex(indices, other.shape, broadcastShape, otherStrides);
+            resultData[i] = this.data[thisIndex] * other.data[otherIndex];
+        }
+        result = new Tensor(resultData, broadcastShape);
+
+        if (!this._isDetached && !other._isDetached) {
+            result._parents.push({
+                tensor: this,
+                gradFn: (grad) => {
+                    const gradForThis = grad.mul(other);
+                    return this.sumBroadcastGrad(gradForThis, this.shape);
+                }
+            }, {
+                tensor: other,
+                gradFn: (grad) => {
+                    const gradForOther = grad.mul(this);
+                    return this.sumBroadcastGrad(gradForOther, other.shape);
+                }
+            });
+        }
     }
     return result;
   }
@@ -396,19 +419,19 @@ export class Tensor {
       return result;
   }
   
-  // Helper methods for transpose
-    private getPositiveAxes(axes: number[]): [number, number] {
-        let axis1 = axes[0] < 0 ? this.shape.length + axes[0] : axes[0];
-        let axis2 = axes.length > 1 ? (axes[1] < 0 ? this.shape.length + axes[1] : axes[1]) : axis1;
-         if (axes.length === 2) {
-             axis1 = axes[0] < 0 ? this.shape.length + axes[0] : axes[0];
-             axis2 = axes[1] < 0 ? this.shape.length + axes[1] : axes[1];
-         } else { // Transpose last two dimensions by default
-             axis1 = this.shape.length - 2;
-             axis2 = this.shape.length - 1;
-         }
-        return [axis1, axis2];
-    }
+  // Helper methods for transpose and broadcasting
+  private getPositiveAxes(axes: number[]): [number, number] {
+      let axis1 = axes[0] < 0 ? this.shape.length + axes[0] : axes[0];
+      let axis2 = axes.length > 1 ? (axes[1] < 0 ? this.shape.length + axes[1] : axes[1]) : axis1;
+       if (axes.length === 2) {
+           axis1 = axes[0] < 0 ? this.shape.length + axes[0] : axes[0];
+           axis2 = axes[1] < 0 ? this.shape.length + axes[1] : axes[1];
+       } else { // Transpose last two dimensions by default
+           axis1 = this.shape.length - 2;
+           axis2 = this.shape.length - 1;
+       }
+      return [axis1, axis2];
+  }
   private getStrides(shape: number[]): number[] {
       const strides = new Array(shape.length).fill(1);
       for(let i = shape.length - 2; i >= 0; i--) {
@@ -431,6 +454,51 @@ export class Tensor {
       }
       return flatIndex;
   }
+   private getBroadcastShape(shape1: number[], shape2: number[]): number[] {
+        const ndim1 = shape1.length;
+        const ndim2 = shape2.length;
+        const ndim = Math.max(ndim1, ndim2);
+        const newShape = new Array(ndim);
+
+        for (let i = 1; i <= ndim; i++) {
+            const dim1 = i <= ndim1 ? shape1[ndim1 - i] : 1;
+            const dim2 = i <= ndim2 ? shape2[ndim2 - i] : 1;
+            if (dim1 !== dim2 && dim1 !== 1 && dim2 !== 1) {
+                throw new Error(`Tensors cannot be broadcast together with shapes [${shape1}] and [${shape2}]`);
+            }
+            newShape[ndim - i] = Math.max(dim1, dim2);
+        }
+        return newShape;
+    }
+
+    private getBroadcastIndex(resultIndices: number[], originalShape: number[], broadcastShape: number[], originalStrides: number[]): number {
+        let index = 0;
+        const ndimOriginal = originalShape.length;
+        const ndimBroadcast = broadcastShape.length;
+        for (let i = 0; i < ndimBroadcast; i++) {
+            const originalDimIndex = ndimOriginal - 1 - (ndimBroadcast - 1 - i);
+            if (originalDimIndex >= 0) {
+                const resultIndex = resultIndices[i];
+                const originalDim = originalShape[originalDimIndex];
+                index += (resultIndex % originalDim) * originalStrides[originalDimIndex];
+            }
+        }
+        return index;
+    }
+    
+    private sumBroadcastGrad(grad: Tensor, originalShape: number[]): Tensor {
+        let summedGrad = grad;
+        while (summedGrad.shape.length > originalShape.length) {
+            summedGrad = summedGrad.sum(0, false);
+        }
+        for (let i = 0; i < originalShape.length; i++) {
+            if (originalShape[i] === 1 && summedGrad.shape[i] > 1) {
+                summedGrad = summedGrad.sum(i, true);
+            }
+        }
+        return summedGrad.reshape(originalShape);
+    }
+
 
 
   /**
@@ -627,18 +695,63 @@ export class Tensor {
    * Суммирует все элементы тензора.
    * @returns Скалярный Tensor с суммой.
    */
-  sum(): Tensor {
-    const sumVal = this.data.reduce((acc, val) => acc + val, 0);
-    const result = new Tensor([sumVal], [1]);
-    if (!this._isDetached) {
-        result._parents.push({
-          tensor: this,
-          // Градиент суммы - это единица для каждого элемента
-          gradFn: (grad) => new Tensor(new Float32Array(this.size).fill(grad.data[0]), this.shape)
-        });
-    }
-    return result;
+    sum(axis: number = -1, keepDims: boolean = false): Tensor {
+      if (axis === -1) {
+        const sumVal = this.data.reduce((acc, val) => acc + val, 0);
+        const result = new Tensor([sumVal], [1]);
+        if (!this._isDetached) {
+            result._parents.push({
+              tensor: this,
+              gradFn: (grad) => new Tensor(new Float32Array(this.size).fill(grad.data[0]), this.shape)
+            });
+        }
+        return result;
+      }
+
+      const realAxis = axis < 0 ? this.shape.length + axis : axis;
+      const newShape = [...this.shape];
+      newShape.splice(realAxis, 1);
+      
+      const axisDim = this.shape[realAxis];
+      const resultSize = this.size / axisDim;
+      const resultData = new Float32Array(resultSize).fill(0);
+      
+      const resultStrides = this.getStrides(newShape);
+
+      for (let i = 0; i < this.size; i++) {
+          const indices = this.getIndices(i, this.getStrides(this.shape));
+          indices.splice(realAxis, 1);
+          const resultIndex = this.getFlatIndex(indices, resultStrides);
+          resultData[resultIndex] += this.data[i];
+      }
+      
+      const finalShape = keepDims ? [...newShape.slice(0, realAxis), 1, ...newShape.slice(realAxis)] : newShape;
+      const result = new Tensor(resultData, finalShape);
+
+      if (!this._isDetached) {
+          result._parents.push({
+            tensor: this,
+            gradFn: (grad) => {
+                 const gradData = new Float32Array(this.size);
+                 const gradStrides = this.getStrides(grad.shape);
+                 
+                 for(let i=0; i<this.size; i++) {
+                    const indices = this.getIndices(i, this.getStrides(this.shape));
+                    if(keepDims) {
+                        indices[realAxis] = 0;
+                    } else {
+                        indices.splice(realAxis, 1);
+                    }
+                    const gradIndex = this.getFlatIndex(indices, gradStrides);
+                    gradData[i] = grad.data[gradIndex];
+                 }
+                 return new Tensor(gradData, this.shape);
+            }
+          });
+      }
+      return result;
   }
+
 
   /**
    * Вычисляет среднее значение всех элементов тензора.
@@ -665,7 +778,6 @@ export class Tensor {
       const resultSize = this.size / axisDim;
       const resultData = new Float32Array(resultSize).fill(0);
       
-      // A bit complex, needs careful implementation. This is simplified.
       for (let i = 0; i < this.size; i++) {
           const indices = this.getIndices(i, this.getStrides(this.shape));
           const resultIndices = [...indices];
@@ -677,7 +789,6 @@ export class Tensor {
       const finalShape = keepDims ? [...newShape.slice(0, realAxis), 1, ...newShape.slice(realAxis)] : newShape;
       const result = new Tensor(resultData, finalShape);
 
-      // Gradient for mean with axis is more complex. For now, it's a pass-through scaled by size.
       if (!this._isDetached) {
           result._parents.push({
             tensor: this,
@@ -685,7 +796,6 @@ export class Tensor {
                  const gradData = new Float32Array(this.size);
                  const gradShape = grad.shape;
                  
-                 // Broadcasting the gradient back
                  for(let i=0; i<this.size; i++) {
                     const indices = this.getIndices(i, this.getStrides(this.shape));
                     const gradIndices = [...indices];
