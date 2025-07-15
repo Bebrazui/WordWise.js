@@ -1,8 +1,9 @@
 // src/lib/model.ts
-import { Embedding, Linear, LSTMCell, Layer, Conv2d, Flatten, relu, crossEntropyLossWithSoftmaxGrad } from './layers';
+import { Embedding, Linear, LSTMCell, Layer, Flatten, crossEntropyLossWithSoftmaxGrad, PositionalEmbedding } from './layers';
+import { TransformerEncoderBlock } from './transformer';
 import { SGD } from './optimizer';
 import { Tensor } from './tensor';
-import { createTextBatches, createImageBatches } from '@/utils/batching';
+import { createSequenceBatches, createImageBatches } from '@/utils/batching';
 
 
 type TextVocabDataType = {
@@ -23,15 +24,15 @@ export type VocabData = TextVocabDataType | ImageVocabDataType;
 
 
 export interface FitCallbacks {
-    onEpochEnd?: (log: { epoch: number; loss: number; gradients: { layer: string; avgGrad: number }[] }) => void;
+    onEpochEnd?: (log: { epoch: number; loss: number; gradients: { layer: string; avgGrad: number }[] }) => boolean;
 }
 
 // --- Base Model Class ---
 abstract class BaseModelClass {
-    abstract type: 'text' | 'image';
+    abstract type: 'text' | 'image' | 'transformer';
 
     abstract getParameters(): Tensor[];
-    abstract getLayers(): { [key: string]: Layer };
+    abstract getLayers(): { [key: string]: Layer | Layer[] };
 
     /**
      * Compiles and trains the model.
@@ -50,8 +51,8 @@ abstract class BaseModelClass {
         const optimizer = new SGD(options.learningRate);
         const startEpoch = options.initialEpoch || 0;
 
-        const batches = this.type === 'text'
-            ? createTextBatches(inputs, targets, options.batchSize)
+        const batches = this.type === 'transformer'
+            ? createSequenceBatches(inputs, targets, options.batchSize, (this as TransformerModel).seqLen)
             : createImageBatches(inputs, targets, options.batchSize);
 
         if (batches.length === 0) {
@@ -60,6 +61,7 @@ abstract class BaseModelClass {
 
         for (let epoch = 0; epoch < options.epochs; epoch++) {
             let epochLoss = 0;
+            let shouldStop = false;
 
             for (const batch of batches) {
                 const batchInputs = new Tensor(batch.inputs.data, batch.inputs.shape);
@@ -69,7 +71,7 @@ abstract class BaseModelClass {
                  if (this instanceof WordWiseModel) {
                     let {h0: h, c0: c} = this.initializeStates(batchInputs.shape[0]);
                     predictionLogits = this.forward(batchInputs, h, c).outputLogits;
-                } else if (this instanceof ImageWiseModel) {
+                } else if (this instanceof TransformerModel) {
                     predictionLogits = this.forward(batchInputs).outputLogits;
                 } else {
                     throw new Error("Unknown model instance type in fit method");
@@ -89,25 +91,29 @@ abstract class BaseModelClass {
 
             // --- Gradient Visualization Callback ---
             if (callbacks?.onEpochEnd) {
-                const gradientInfo = Object.entries(this.getLayers()).map(([layerName, layer]) => {
-                    let totalGradMag = 0;
-                    let paramCount = 0;
-                    layer.getParameters().forEach(p => {
-                        if (p.grad) {
-                           totalGradMag += p.grad.data.reduce((acc, val) => acc + Math.abs(val), 0) / p.grad.size;
-                        }
+                const gradientInfo = Object.entries(this.getLayers()).flatMap(([layerName, layerOrLayers]) => {
+                    const layers = Array.isArray(layerOrLayers) ? layerOrLayers : [layerOrLayers];
+                    return layers.map((layer, index) => {
+                         let totalGradMag = 0;
+                         layer.getParameters().forEach(p => {
+                            if (p.grad) {
+                               totalGradMag += p.grad.data.reduce((acc, val) => acc + Math.abs(val), 0) / p.grad.size;
+                            }
+                         });
+                         const finalLayerName = layers.length > 1 ? `${layerName}_${index}` : layerName;
+                         return { layer: finalLayerName, avgGrad: totalGradMag };
                     });
-                     return { layer: layerName, avgGrad: totalGradMag };
                 });
 
-                callbacks.onEpochEnd({
+                shouldStop = callbacks.onEpochEnd({
                     epoch: currentEpoch,
                     loss: avgEpochLoss,
                     gradients: gradientInfo
                 });
             }
-            // Give the main thread a chance to breathe
+            // Give the main thread a chance to breathe and check for stop signal
             await new Promise(resolve => setTimeout(resolve, 10));
+            if (shouldStop) break;
         }
     }
 }
@@ -139,7 +145,9 @@ export class WordWiseModel extends BaseModelClass {
 
   forward(input: Tensor, prevH: Tensor, prevC: Tensor): { outputLogits: Tensor, h: Tensor, c: Tensor } {
     const embeddedInput = this.embeddingLayer.forward(input);
-    const { h, c } = this.lstmCell.forward(embeddedInput, prevH, prevC);
+    // Note: For simplicity, this LSTM model processes sequences as a batch of independent items.
+    // A true sequence-to-sequence model would iterate through the sequence dimension.
+    const { h, c } = this.lstmCell.forward(embeddedInput.reshape([-1, this.embeddingDim]), prevH, prevC);
     const outputLogits = this.outputLayer.forward(h);
     return { outputLogits, h, c };
   }
@@ -167,76 +175,112 @@ export class WordWiseModel extends BaseModelClass {
   }
 }
 
-export class ImageWiseModel extends BaseModelClass {
-    type: 'image' = 'image';
-    conv1: Conv2d;
-    flatten: Flatten;
-    linear1: Linear;
-    public numClasses: number;
+export class TransformerModel extends BaseModelClass {
+    type: 'transformer' = 'transformer';
+    embeddingLayer: Embedding;
+    posEmbeddingLayer: PositionalEmbedding;
+    transformerBlocks: TransformerEncoderBlock[];
+    outputLayer: Linear;
 
-    constructor(numClasses: number, imageWidth: number, imageHeight: number, inChannels: number) {
+    public vocabSize: number;
+    public dModel: number;
+    public numLayers: number;
+    public seqLen: number;
+    public dff: number;
+    public numHeads: number;
+
+    constructor(vocabSize: number, seqLen: number, dModel: number, numLayers: number, numHeads: number, dff: number) {
         super();
-        this.numClasses = numClasses;
-        this.conv1 = new Conv2d(inChannels, 8, 3, 1, 1);
-        this.flatten = new Flatten();
-        const flattenedSize = 8 * imageWidth * imageHeight;
-        this.linear1 = new Linear(flattenedSize, numClasses);
+        this.vocabSize = vocabSize;
+        this.dModel = dModel;
+        this.numLayers = numLayers;
+        this.seqLen = seqLen;
+        this.dff = dff;
+        this.numHeads = numHeads;
+        
+        this.embeddingLayer = new Embedding(vocabSize, dModel);
+        this.posEmbeddingLayer = new PositionalEmbedding(seqLen, dModel);
+        this.transformerBlocks = Array.from({ length: numLayers }, () => new TransformerEncoderBlock(dModel, numHeads, dff));
+        this.outputLayer = new Linear(dModel, vocabSize);
     }
     
     forward(input: Tensor): { outputLogits: Tensor } {
-        let x = this.conv1.forward(input);
-        x = relu(x);
-        x = this.flatten.forward(x);
-        const outputLogits = this.linear1.forward(x);
+        let x = this.embeddingLayer.forward(input); // [batch, seqLen, dModel]
+        x = this.posEmbeddingLayer.forward(x);     // [batch, seqLen, dModel]
+
+        for(const block of this.transformerBlocks) {
+            x = block.forward(x);
+        }
+
+        const outputLogits = this.outputLayer.forward(x); // [batch, seqLen, vocabSize]
         return { outputLogits };
     }
 
     getParameters(): Tensor[] {
         return [
-            ...this.conv1.getParameters(),
-            ...this.linear1.getParameters()
+            ...this.embeddingLayer.getParameters(),
+            ...this.transformerBlocks.flatMap(block => block.getParameters()),
+            ...this.outputLayer.getParameters()
         ];
     }
     
-    getLayers(): { [key: string]: Layer } {
+    getLayers(): { [key: string]: Layer | Layer[] } {
         return {
-            'Convolutional': this.conv1,
-            'Output': this.linear1,
+            'Embedding': this.embeddingLayer,
+            'PositionalEmbedding': this.posEmbeddingLayer,
+            'TransformerBlock': this.transformerBlocks,
+            'Output': this.outputLayer,
         }
     }
 }
 
-export type AnyModel = WordWiseModel | ImageWiseModel;
+
+export type AnyModel = WordWiseModel | TransformerModel;
 
 
 export function serializeModel(model: AnyModel, vocabData: VocabData): string {
-    const layersData: { [key: string]: { [key: string]: { data: number[], shape: number[] } } } = {};
+    const layersData: { [key: string]: any } = {};
 
-    Object.entries(model.getLayers()).forEach(([layerName, layer]) => {
-        layersData[layerName] = {};
-        layer.getParameters().forEach(param => {
-            if (!param.name) {
-                console.warn(`Parameter in layer ${layerName} is missing a name and will not be serialized.`);
-                return;
-            }
-            layersData[layerName][param.name] = {
-                data: Array.from(param.data),
-                shape: param.shape
-            };
+    Object.entries(model.getLayers()).forEach(([layerName, layerOrLayers]) => {
+        const layers = Array.isArray(layerOrLayers) ? layerOrLayers : [layerOrLayers];
+        const serializedLayers = layers.map(layer => {
+            const layerParams: { [key: string]: { data: number[], shape: number[] } } = {};
+             layer.getParameters().forEach(param => {
+                if (!param.name) {
+                    console.warn(`Parameter in layer ${layerName} is missing a name and will not be serialized.`);
+                    return;
+                }
+                layerParams[param.name] = {
+                    data: Array.from(param.data),
+                    shape: param.shape
+                };
+            });
+            return layerParams;
         });
+        
+       layersData[layerName] = layers.length === 1 ? serializedLayers[0] : serializedLayers;
     });
     
-    let architecture: any = { type: model.type };
+    let architecture: any;
     let vocabInfo: any = {};
 
-    if (model.type === 'text' && model instanceof WordWiseModel && 'vocab' in vocabData) {
-        architecture = { ...architecture, vocabSize: model.vocabSize, embeddingDim: model.embeddingDim, hiddenSize: model.hiddenSize };
+    if (model instanceof WordWiseModel && 'vocab' in vocabData) {
+        architecture = { type: 'text', vocabSize: model.vocabSize, embeddingDim: model.embeddingDim, hiddenSize: model.hiddenSize };
         vocabInfo = { vocab: vocabData.vocab };
-    } else if (model.type === 'image' && model instanceof ImageWiseModel && 'labels' in vocabData) {
-        architecture = { ...architecture, numClasses: model.numClasses };
-        vocabInfo = { labels: vocabData.labels };
+    } else if (model instanceof TransformerModel && 'vocab' in vocabData) {
+        architecture = {
+            type: 'transformer',
+            vocabSize: model.vocabSize,
+            seqLen: model.seqLen,
+            dModel: model.dModel,
+            numLayers: model.numLayers,
+            numHeads: model.numHeads,
+            dff: model.dff
+        };
+        vocabInfo = { vocab: vocabData.vocab };
+    } else {
+        throw new Error("Unsupported model or vocab data type for serialization.");
     }
-
 
     const dataToSave = {
         architecture,
@@ -259,8 +303,8 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
     let model: AnyModel;
     let vocabData: VocabData;
 
-    if (architecture.type === 'text') {
-        if (!savedData.vocab) throw new Error("Missing vocab for text model.");
+    if (architecture.type === 'text' || architecture.type === 'transformer') {
+         if (!savedData.vocab) throw new Error("Missing vocab for text model.");
         const vocab = savedData.vocab;
         const wordToIndex = new Map(vocab.map((word: string, i: number) => [word, i]));
         const indexToWord = new Map(vocab.map((word: string, i: number) => [i, word]));
@@ -271,35 +315,37 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
              throw new Error("Vocabulary size mismatch between loaded model and its architecture description.");
         }
         
-        const { embeddingDim, hiddenSize } = architecture;
-        model = new WordWiseModel(vocabSize, embeddingDim, hiddenSize);
-    } else if (architecture.type === 'image') {
-        if (!savedData.labels) throw new Error("Missing labels for image model.");
-        const labels = savedData.labels;
-        const labelToIndex = new Map(labels.map((label: string, i: number) => [label, i]));
-        const indexToLabel = new Map(labels.map((label: string, i: number) => [i, label]));
-        const numClasses = labels.length;
-        vocabData = { labels, labelToIndex, indexToLabel, numClasses };
-
-        if (numClasses !== architecture.numClasses) {
-            throw new Error("Number of classes mismatch between loaded model and its architecture description.");
+        if (architecture.type === 'text') {
+            const { embeddingDim, hiddenSize } = architecture;
+            model = new WordWiseModel(vocabSize, embeddingDim, hiddenSize);
+        } else { // transformer
+            const { seqLen, dModel, numLayers, numHeads, dff } = architecture;
+            model = new TransformerModel(vocabSize, seqLen, dModel, numLayers, numHeads, dff);
         }
-        model = new ImageWiseModel(numClasses, 32, 32, 3);
     } else {
         throw new Error(`Unknown model type in saved file: ${architecture.type}`);
     }
 
-    Object.entries(model.getLayers()).forEach(([layerName, layer]) => {
+    Object.entries(model.getLayers()).forEach(([layerName, layerOrLayers]) => {
         const savedLayerWeights = weights[layerName];
         if (!savedLayerWeights) throw new Error(`Weights for layer ${layerName} not found in file.`);
         
-        layer.getParameters().forEach(param => {
-            if (!param.name) return;
-            const savedParam = savedLayerWeights[param.name];
-            if (!savedParam) throw new Error(`Parameter ${param.name} for layer ${layerName} not found.`);
-            if (param.size !== savedParam.data.length) throw new Error(`Weight size mismatch for ${param.name}.`);
+        const layers = Array.isArray(layerOrLayers) ? layerOrLayers : [layerOrLayers];
+        const savedWeightsArray = Array.isArray(savedLayerWeights) ? savedLayerWeights : [savedLayerWeights];
 
-            param.data.set(savedParam.data);
+        if (layers.length !== savedWeightsArray.length) throw new Error(`Layer count mismatch for ${layerName}`);
+
+        layers.forEach((layer, index) => {
+            const savedLayerParams = savedWeightsArray[index];
+            layer.getParameters().forEach(param => {
+                if (!param.name) return;
+                const savedParam = savedLayerParams[param.name];
+                if (!savedParam) throw new Error(`Parameter ${param.name} for layer ${layerName} not found.`);
+                if (param.size !== savedParam.data.length) {
+                    throw new Error(`Weight size mismatch for ${param.name} in layer ${layerName}. Expected ${param.size}, got ${savedParam.data.length}.`);
+                }
+                param.data.set(savedParam.data);
+            });
         });
     });
 

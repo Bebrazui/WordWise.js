@@ -44,60 +44,50 @@ export class Embedding extends Layer {
 
   /**
    * Прямой проход слоя Embedding.
-   * @param input Тензор с индексами слов: [batchSize, 1] или [batchSize].
-   * @returns Тензор эмбеддингов: [batchSize, embeddingDim].
+   * @param input Тензор с индексами слов: [batchSize, seqLen].
+   * @returns Тензор эмбеддингов: [batchSize, seqLen, embeddingDim].
    */
   forward(input: Tensor): Tensor {
-    if (input.shape.length > 2 || (input.shape.length === 2 && input.shape[1] !== 1)) {
-        throw new Error("Embedding layer input must be a 1D tensor of indices ([batchSize]) or 2D ([batchSize, 1]).");
+    if (input.shape.length !== 2) {
+      throw new Error(`Embedding layer input must be a 2D tensor of indices [batchSize, seqLen]. Got shape [${input.shape}]`);
     }
-    const batchSize = input.shape[0];
+    const [batchSize, seqLen] = input.shape;
     const embeddingDim = this.weights.shape[1];
     const vocabSize = this.weights.shape[0];
 
-    const resultData = new Float32Array(batchSize * embeddingDim);
+    const resultData = new Float32Array(batchSize * seqLen * embeddingDim);
+    const parentTensor = this.weights;
 
-    const parentTensor = this.weights; // Обучаемый тензор, к которому будут применяться градиенты
+    for (let b = 0; b < batchSize; b++) {
+      for (let s = 0; s < seqLen; s++) {
+        const wordIndex = Math.floor(input.data[b * seqLen + s]);
+        const finalIndex = (wordIndex >= 0 && wordIndex < vocabSize) ? wordIndex : 0; // Fallback to <unk>
 
-    // Для каждого индекса в батче, выбираем соответствующую строку из таблицы эмбеддингов
-    for (let i = 0; i < batchSize; i++) {
-      const wordIndex = Math.floor(input.data[i]);
-      if (wordIndex < 0 || wordIndex >= vocabSize) {
-        // Если индекс выходит за пределы, используем <unk> (индекс 0)
-        console.warn(`Embedding: Word index ${wordIndex} out of vocabulary bounds (0-${vocabSize-1}). Using <unk> token.`);
-        // Можно использовать <unk> токен, если он был добавлен при создании словаря
-        const unkIndex = 0; // Предполагаем, что <unk> имеет индекс 0
-        const embeddingRowStart = unkIndex * embeddingDim;
-        const resultRowStart = i * embeddingDim;
-        for (let j = 0; j < embeddingDim; j++) {
-          resultData[resultRowStart + j] = this.weights.data[embeddingRowStart + j];
-        }
-      } else {
-        const embeddingRowStart = wordIndex * embeddingDim;
-        const resultRowStart = i * embeddingDim;
-        for (let j = 0; j < embeddingDim; j++) {
-          resultData[resultRowStart + j] = this.weights.data[embeddingRowStart + j];
+        const embeddingRowStart = finalIndex * embeddingDim;
+        const resultRowStart = (b * seqLen + s) * embeddingDim;
+
+        for (let d = 0; d < embeddingDim; d++) {
+          resultData[resultRowStart + d] = this.weights.data[embeddingRowStart + d];
         }
       }
     }
 
-    const result = new Tensor(resultData, [batchSize, embeddingDim]);
+    const result = new Tensor(resultData, [batchSize, seqLen, embeddingDim]);
 
-    // Градиент для Embedding слоя:
-    // Градиент от `result` должен быть добавлен к соответствующим строкам `this.weights`
     result._parents.push({
       tensor: parentTensor,
       gradFn: (grad) => {
-        const dWeights = Tensor.zeros(parentTensor.shape); // Создаем тензор для агрегации градиентов
-        for (let i = 0; i < batchSize; i++) {
-          const wordIndex = Math.floor(input.data[i]); // Оригинальный индекс слова
-          if (wordIndex < 0 || wordIndex >= vocabSize) continue; // Не обновляем градиенты для неверных индексов
+        const dWeights = Tensor.zeros(parentTensor.shape);
+        for (let b = 0; b < batchSize; b++) {
+          for (let s = 0; s < seqLen; s++) {
+            const wordIndex = Math.floor(input.data[b * seqLen + s]);
+            if (wordIndex < 0 || wordIndex >= vocabSize) continue;
 
-          const gradRowStart = i * embeddingDim;
-          const dWeightsRowStart = wordIndex * embeddingDim;
-          for (let j = 0; j < embeddingDim; j++) {
-            // Аккумулируем градиент, так как одно и то же слово может появиться несколько раз в батче
-            dWeights.data[dWeightsRowStart + j] += grad.data[gradRowStart + j];
+            const gradRowStart = (b * seqLen + s) * embeddingDim;
+            const dWeightsRowStart = wordIndex * embeddingDim;
+            for (let d = 0; d < embeddingDim; d++) {
+              dWeights.data[dWeightsRowStart + d] += grad.data[gradRowStart + d];
+            }
           }
         }
         return dWeights;
@@ -137,16 +127,17 @@ export class Linear extends Layer {
 
   /**
    * Прямой проход линейного слоя.
-   * @param input Входной тензор: [batchSize, inputSize].
-   * @returns Выходной тензор: [batchSize, outputSize].
+   * @param input Входной тензор: [batchSize, ..., inputSize].
+   * @returns Выходной тензор: [batchSize, ..., outputSize].
    */
   forward(input: Tensor): Tensor {
     // Z = X @ W + B
-    const matMulResult = input.dot(this.weights); // [batchSize, outputSize]
-    const output = matMulResult.add(this.bias);   // Бродкастинг bias: [batchSize, outputSize]
+    const matMulResult = input.dot(this.weights);
+    const output = matMulResult.add(this.bias);
     return output;
   }
 }
+
 
 // --- Функции активации ---
 
@@ -185,6 +176,7 @@ export function tanh(input: Tensor): Tensor {
     (x, y, g) => g * (1 - y * y) // Производная Tanh: 1 - y^2
   );
 }
+
 
 // --- LSTM Cell (для обработки последовательностей) ---
 
@@ -262,55 +254,6 @@ export class LSTMCell extends Layer {
     }
 }
 
-// --- Сверточный слой (Conv2D) ---
-export class Conv2d extends Layer {
-    kernels: Tensor;
-    biases: Tensor;
-    parameters: Tensor[];
-    stride: number;
-    padding: number;
-
-    constructor(inChannels: number, outChannels: number, kernelSize: number, stride = 1, padding = 0) {
-        super();
-        const fanIn = inChannels * kernelSize * kernelSize;
-        const fanOut = outChannels * kernelSize * kernelSize;
-        const limit = Math.sqrt(6 / (fanIn + fanOut));
-
-        this.kernels = Tensor.randn([outChannels, inChannels, kernelSize, kernelSize], limit);
-        this.biases = Tensor.zeros([outChannels]);
-        this.kernels.name = 'kernels';
-        this.biases.name = 'biases';
-        this.parameters = [this.kernels, this.biases];
-        this.stride = stride;
-        this.padding = padding;
-    }
-
-    forward(input: Tensor): Tensor {
-        // Simplified forward pass for convolution. A full implementation is very complex.
-        // This is a placeholder demonstrating the concept.
-        // Input shape: [batch, inChannels, height, width]
-        // Output shape: [batch, outChannels, outHeight, outWidth]
-        const [batchSize, inChannels, inHeight, inWidth] = input.shape;
-        const [outChannels, _, kernelHeight, kernelWidth] = this.kernels.shape;
-
-        const outHeight = Math.floor((inHeight - kernelHeight + 2 * this.padding) / this.stride) + 1;
-        const outWidth = Math.floor((inWidth - kernelWidth + 2 * this.padding) / this.stride) + 1;
-
-        const output = Tensor.zeros([batchSize, outChannels, outHeight, outWidth]);
-        // Note: The actual convolution logic with autograd is extremely complex to write from scratch
-        // and is omitted here for brevity. This is a conceptual placeholder.
-        // A real implementation would involve complex nested loops and gradient calculations.
-        // For our purpose, we will pass a flattened version as a mock result.
-        
-        const flattenedOutput = Tensor.zeros([batchSize, outChannels * outHeight * outWidth]);
-        flattenedOutput._parents.push({tensor: input, gradFn: grad => grad}); // Dummy grad
-        this.parameters.forEach(p => flattenedOutput._parents.push({tensor: p, gradFn: grad => grad}));
-
-
-        return flattenedOutput;
-    }
-}
-
 // --- Слой выравнивания (Flatten) ---
 export class Flatten extends Layer {
     parameters: Tensor[] = [];
@@ -330,6 +273,64 @@ export class Flatten extends Layer {
     }
 }
 
+// --- Слой нормализации (Layer Normalization) ---
+export class LayerNorm extends Layer {
+    gamma: Tensor; // Обучаемый параметр масштабирования
+    beta: Tensor;  // Обучаемый параметр сдвига
+    epsilon: number;
+    parameters: Tensor[];
+
+    constructor(normalizedShape: number, epsilon = 1e-5) {
+        super();
+        this.gamma = Tensor.ones([1, normalizedShape]);
+        this.beta = Tensor.zeros([1, normalizedShape]);
+        this.gamma.name = 'gamma';
+        this.beta.name = 'beta';
+        this.epsilon = epsilon;
+        this.parameters = [this.gamma, this.beta];
+    }
+
+    forward(input: Tensor): Tensor {
+        // Нормализация происходит по последней размерности (признакам)
+        const mean = input.mean(-1, true); // [batch, seqLen, 1]
+        const variance = input.sub(mean).pow(2).mean(-1, true); // [batch, seqLen, 1]
+        const std = variance.addScalar(this.epsilon).sqrt();
+        const x_normalized = input.sub(mean).div(std);
+        return x_normalized.mul(this.gamma).add(this.beta);
+    }
+}
+
+
+// --- Positional Embedding Layer ---
+export class PositionalEmbedding extends Layer {
+    private positionalEncoding: Tensor;
+    parameters: Tensor[] = [];
+
+    constructor(maxSeqLen: number, dModel: number) {
+        super();
+        this.positionalEncoding = Tensor.zeros([maxSeqLen, dModel]);
+        for (let pos = 0; pos < maxSeqLen; pos++) {
+            for (let i = 0; i < dModel; i++) {
+                let value: number;
+                if (i % 2 === 0) {
+                    value = Math.sin(pos / Math.pow(10000, i / dModel));
+                } else {
+                    value = Math.cos(pos / Math.pow(10000, (i - 1) / dModel));
+                }
+                this.positionalEncoding.data[pos * dModel + i] = value;
+            }
+        }
+    }
+    
+    forward(x: Tensor): Tensor {
+        const seqLen = x.shape[1];
+        // Обрезаем позиционные кодировки до нужной длины последовательности
+        const posEncodingSlice = this.positionalEncoding.slice([0, 0], [seqLen, x.shape[2]]);
+        // Добавляем позиционные кодировки к входным эмбеддингам
+        return x.add(posEncodingSlice);
+    }
+}
+
 
 // --- Функции потерь ---
 
@@ -343,6 +344,13 @@ export class Flatten extends Layer {
  * @returns Скалярный тензор, представляющий среднюю потерю по батчу.
  */
 export function crossEntropyLossWithSoftmaxGrad(predictions_logits: Tensor, targets_one_hot: Tensor): Tensor {
+    if (predictions_logits.shape.length > 2) {
+        // Flatten for loss calculation if needed, e.g., from [batch, seq, vocab]
+        const [batchSize, seqLen, vocabSize] = predictions_logits.shape;
+        predictions_logits = predictions_logits.reshape([batchSize * seqLen, vocabSize]);
+        targets_one_hot = targets_one_hot.reshape([batchSize * seqLen, vocabSize]);
+    }
+    
     if (!predictions_logits.shape.every((dim, i) => dim === targets_one_hot.shape[i])) {
         throw new Error("Predictions logits and targets (one-hot) must have the same shape for Cross-Entropy loss.");
     }
@@ -363,7 +371,7 @@ export function crossEntropyLossWithSoftmaxGrad(predictions_logits: Tensor, targ
             const targetVal = targets_one_hot.data[i * numClasses + j];
 
             if (targetVal === 1) { // Если это истинный класс (в one-hot представлении)
-                totalLoss -= targetVal * Math.log(predProb + epsilon);
+                totalLoss -= Math.log(predProb + epsilon);
             }
         }
     }
@@ -379,7 +387,7 @@ export function crossEntropyLossWithSoftmaxGrad(predictions_logits: Tensor, targ
             for (let i = 0; i < predictions_logits.size; i++) {
                 // `grad.data[0]` здесь - это градиент от операции `mean()` или просто 1.0,
                 // если loss - это единственный тензор, от которого вызывается backward().
-                d_logits[i] = (softmaxProbs.data[i] - targets_one_hot.data[i]) * grad.data[0];
+                 d_logits[i] = (softmaxProbs.data[i] - targets_one_hot.data[i]) / batchSize * grad.data[0];
             }
             return new Tensor(d_logits, predictions_logits.shape);
         }
@@ -392,36 +400,36 @@ export function crossEntropyLossWithSoftmaxGrad(predictions_logits: Tensor, targ
  * Функция активации Softmax.
  * Преобразует вектор логитов в распределение вероятностей.
  * Используется отдельно для получения предсказаний после обучения.
- * @param input Входной тензор (логиты): [batchSize, numClasses].
- * @returns Тензор вероятностей: [batchSize, numClasses].
+ * @param input Входной тензор (логиты): [batchSize, ..., numClasses].
+ * @returns Тензор вероятностей: [batchSize, ..., numClasses].
  */
 export function softmax(input: Tensor): Tensor {
-  if (input.shape.length !== 2) {
-    throw new Error("Softmax expects 2D tensor [batch_size, num_classes].");
-  }
-  const [batchSize, numClasses] = input.shape;
-  const resultData = new Float32Array(input.size);
+    const lastDim = input.shape[input.shape.length - 1];
+    const reshaped = input.reshape([-1, lastDim]);
+    const [batchSize, numClasses] = reshaped.shape;
+    const resultData = new Float32Array(reshaped.size);
 
-  for (let i = 0; i < batchSize; i++) {
-    const rowStart = i * numClasses;
-    // Находим максимум для численной стабильности (вычитаем из каждого элемента)
-    let maxVal = input.data[rowStart];
-    for (let j = 1; j < numClasses; j++) {
-      if (input.data[rowStart + j] > maxVal) {
-        maxVal = input.data[rowStart + j];
-      }
-    }
+    for (let i = 0; i < batchSize; i++) {
+        const rowStart = i * numClasses;
+        // Находим максимум для численной стабильности (вычитаем из каждого элемента)
+        let maxVal = reshaped.data[rowStart];
+        for (let j = 1; j < numClasses; j++) {
+            if (reshaped.data[rowStart + j] > maxVal) {
+                maxVal = reshaped.data[rowStart + j];
+            }
+        }
 
-    let sumExp = 0;
-    for (let j = 0; j < numClasses; j++) {
-      sumExp += Math.exp(input.data[rowStart + j] - maxVal);
-    }
+        let sumExp = 0;
+        for (let j = 0; j < numClasses; j++) {
+            sumExp += Math.exp(reshaped.data[rowStart + j] - maxVal);
+        }
 
-    for (let j = 0; j < numClasses; j++) {
-      resultData[rowStart + j] = Math.exp(input.data[rowStart + j] - maxVal) / sumExp;
+        for (let j = 0; j < numClasses; j++) {
+            resultData[rowStart + j] = Math.exp(reshaped.data[rowStart + j] - maxVal) / sumExp;
+        }
     }
-  }
-  // Softmax сам по себе не добавляет _parents, так как его градиент
-  // обрабатывается в crossEntropyLossWithSoftmaxGrad для численной стабильности.
-  return new Tensor(resultData, input.shape);
+    // Softmax сам по себе не добавляет _parents, так как его градиент
+    // обрабатывается в crossEntropyLossWithSoftmaxGrad для численной стабильности.
+    const resultTensor = new Tensor(resultData, reshaped.shape);
+    return resultTensor.reshape(input.shape);
 }

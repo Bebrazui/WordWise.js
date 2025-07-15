@@ -1,18 +1,18 @@
 // src/app/wordwise/wordwise.worker.ts
 /// <reference lib="webworker" />
 
-import { WordWiseModel, ImageWiseModel, serializeModel, AnyModel, VocabData, FitCallbacks } from '@/lib/model';
+import { WordWiseModel, TransformerModel, serializeModel, deserializeModel, AnyModel, VocabData, FitCallbacks } from '@/lib/model';
 import { buildTextVocabulary, wordsToInputTensors, wordsToTargetTensors } from '@/utils/tokenizer';
-import { buildImageVocabulary } from '@/utils/image-processor';
 import { Tensor } from '@/lib/tensor';
 
 let model: AnyModel | null = null;
 let vocabData: VocabData | null = null;
-let trainingStopFlag = false; // Note: Stopping mechanism needs to be reimplemented within model.fit
+let stopTrainingFlag = false;
 let trainingData: {
     inputs: Tensor[],
     targets: Tensor[],
 } | null = null;
+let modelType: 'lstm' | 'transformer' = 'transformer';
 
 /**
  * Handles messages from the main thread.
@@ -30,69 +30,79 @@ self.onmessage = async (event: MessageEvent) => {
         await train(payload);
         break;
       case 'stop':
-        // TODO: Implement a more robust stopping mechanism for model.fit
-        trainingStopFlag = true;
+        stopTrainingFlag = true;
+        break;
+      case 'load-model':
+        await loadModel(payload.modelJson);
         break;
     }
   } catch (error) {
-    self.postMessage({ type: 'error', payload: { message: error instanceof Error ? error.message : String(error) } });
+    self.postMessage({ type: 'error', payload: { message: error instanceof Error ? error.message : String(error), error } });
   }
 };
+
+
+async function loadModel(modelJson: string) {
+    const loaded = deserializeModel(modelJson);
+    model = loaded.model;
+    vocabData = loaded.vocabData;
+    
+    if (model instanceof TransformerModel) {
+        modelType = 'transformer';
+    } else if (model instanceof WordWiseModel) {
+        modelType = 'lstm';
+    } else {
+        throw new Error("Unknown model type after loading.");
+    }
+    
+    self.postMessage({
+        type: 'model-loaded',
+        payload: {
+            architecture: (model as any).getArchitecture(), // A helper method would be nice here
+        }
+    });
+}
+
 
 /**
  * Initializes the model, vocabulary, and training data.
  */
 async function initialize(payload: any) {
-  if (payload.type === 'text') {
-    const { textCorpus, embeddingDim, hiddenSize } = payload;
-    vocabData = buildTextVocabulary(textCorpus);
+  const { modelType: newModelType, textCorpus } = payload;
+  modelType = newModelType;
+  vocabData = buildTextVocabulary(textCorpus);
+  
+  if (modelType === 'lstm') {
+    const { embeddingDim, hiddenSize } = payload;
     model = new WordWiseModel(vocabData.vocabSize, embeddingDim, hiddenSize);
-    
-    const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
-    trainingData = {
+     const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
+     trainingData = {
         inputs: wordsToInputTensors(words.slice(0, -1), vocabData.wordToIndex),
         targets: wordsToTargetTensors(words.slice(1), vocabData.wordToIndex, vocabData.vocabSize)
-    };
-    
-    const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
-    const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
-  
-    self.postMessage({ 
-      type: 'initialized', 
-      payload: { 
-        type: 'text',
-        vocabSize: vocabData.vocabSize,
-        sampleWords: shuffled.slice(0, 4)
-      } 
-    });
-  } else if (payload.type === 'image') {
-    const { items, imageSize } = payload;
-    vocabData = buildImageVocabulary(items.map((item: any) => item.label));
-    model = new ImageWiseModel(vocabData.numClasses, imageSize, imageSize, 3);
-    
-    const imageTensors = items.map((item: any) => new Tensor(item.pixelData, item.shape));
-    const targetTensors = items.map((item: any) => {
-        const index = (vocabData as { labelToIndex: Map<string, number> }).labelToIndex.get(item.label)!;
-        const oneHot = new Float32Array((vocabData as { numClasses: number }).numClasses).fill(0);
-        oneHot[index] = 1;
-        return new Tensor(oneHot, [1, (vocabData as { numClasses: number }).numClasses]);
-    });
-
-    trainingData = {
-        inputs: imageTensors,
-        targets: targetTensors
-    };
-
-     self.postMessage({ 
-      type: 'initialized', 
-      payload: { 
-        type: 'image',
-        numClasses: vocabData.numClasses,
-      } 
-    });
+     };
+  } else if (modelType === 'transformer') {
+    const { dModel, numHeads, dff, numLayers, seqLen } = payload;
+    model = new TransformerModel(vocabData.vocabSize, seqLen, dModel, numLayers, numHeads, dff);
+     const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
+      trainingData = {
+        inputs: wordsToInputTensors(words, vocabData.wordToIndex),
+        targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
+     };
   } else {
     throw new Error('Unknown initialization type');
   }
+  
+  const wordsForSampling = vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2);
+  const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
+
+  self.postMessage({ 
+    type: 'initialized', 
+    payload: { 
+      type: modelType,
+      vocabSize: vocabData.vocabSize,
+      sampleWords: shuffled.slice(0, 4)
+    } 
+  });
 }
 
 /**
@@ -104,6 +114,7 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
   }
 
   const { numEpochs, learningRate, batchSize, lossHistory } = payload;
+  stopTrainingFlag = false;
   
   const callbacks: FitCallbacks = {
     onEpochEnd: (log) => {
@@ -116,6 +127,7 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
                 progress: ((log.epoch - (lossHistory.length > 0 ? lossHistory[lossHistory.length-1].epoch : -1)) / numEpochs) * 100,
             },
         });
+        return stopTrainingFlag; // Return flag to stop training if true
     }
   };
 
@@ -125,6 +137,11 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
       learningRate,
       initialEpoch: lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch + 1 : 0
   }, callbacks);
+  
+  if (stopTrainingFlag) {
+       self.postMessage({ type: 'training-stopped', payload: { epoch: lossHistory.length > 0 ? lossHistory[lossHistory.length-1].epoch : 0 } });
+       return;
+  }
   
   const modelJson = serializeModel(model, vocabData);
   self.postMessage({ type: 'training-complete', payload: { modelJson } });

@@ -13,42 +13,56 @@ type Batch = {
 };
 
 /**
- * Creates batches from sequences of text input and target tensors.
- * This function is designed to be self-contained and used within a worker.
- * @param inputTensors Array of input tensors.
- * @param targetTensors Array of target tensors.
+ * Creates batches from sequences of text input and target tensors for Transformer models.
+ * @param inputTensors Array of input tensors (word indices).
+ * @param targetTensors Array of target tensors (one-hot vectors).
  * @param batchSize The desired batch size.
+ * @param seqLen The fixed sequence length for the model.
  * @returns An array of batches (plain objects for worker compatibility).
  */
-export function createTextBatches(inputTensors: Tensor[], targetTensors: Tensor[], batchSize: number): Batch[] {
-  const batches = [];
-  const totalSteps = inputTensors.length;
+export function createSequenceBatches(inputTensors: Tensor[], targetTensors: Tensor[], batchSize: number, seqLen: number): Batch[] {
+    const batches: Batch[] = [];
+    const totalWords = inputTensors.length;
+    if (totalWords < seqLen + 1) {
+        console.warn("Not enough data to create a single batch.");
+        return [];
+    }
+    
+    const vocabSize = targetTensors[0].shape[1];
 
-  for (let i = 0; i < totalSteps; i += batchSize) {
-    const currentInputBatch = inputTensors.slice(i, i + batchSize);
-    const currentTargetBatch = targetTensors.slice(i, i + batchSize);
-    const actualBatchSize = currentInputBatch.length;
+    // Iterate through the data to create overlapping sequences
+    for (let i = 0; i < totalWords - seqLen; i += batchSize * seqLen) {
+        
+        let currentInputBatch: number[] = [];
+        let currentTargetBatch: number[] = [];
+        
+        for (let b = 0; b < batchSize; b++) {
+            const startIdx = i + (b * seqLen);
+            if (startIdx + seqLen >= totalWords) break;
 
-    if (actualBatchSize === 0) continue;
+            const inputSeq = inputTensors.slice(startIdx, startIdx + seqLen);
+            const targetSeq = targetTensors.slice(startIdx + 1, startIdx + seqLen + 1);
 
-    const batchedInputData = new Float32Array(actualBatchSize);
-    for (let j = 0; j < actualBatchSize; j++) {
-      batchedInputData[j] = currentInputBatch[j].data[0];
+            inputSeq.forEach(t => currentInputBatch.push(t.data[0]));
+            targetSeq.forEach(t => currentTargetBatch.push(...t.data));
+        }
+        
+        const actualBatchSize = Math.floor(currentInputBatch.length / seqLen);
+        if (actualBatchSize === 0) continue;
+        
+        // Truncate if we overshot
+        const finalInputData = new Float32Array(currentInputBatch.slice(0, actualBatchSize * seqLen));
+        const finalTargetData = new Float32Array(currentTargetBatch.slice(0, actualBatchSize * seqLen * vocabSize));
+
+        batches.push({
+            inputs: { data: finalInputData, shape: [actualBatchSize, seqLen] },
+            targets: { data: finalTargetData, shape: [actualBatchSize, seqLen, vocabSize] },
+        });
     }
 
-    const vocabSize = currentTargetBatch[0].shape[1];
-    const batchedTargetData = new Float32Array(actualBatchSize * vocabSize);
-    for (let j = 0; j < actualBatchSize; j++) {
-      batchedTargetData.set(currentTargetBatch[j].data, j * vocabSize);
-    }
-
-    batches.push({
-      inputs: { data: batchedInputData, shape: [actualBatchSize, 1] },
-      targets: { data: batchedTargetData, shape: [actualBatchSize, vocabSize] },
-    });
-  }
-  return batches;
+    return batches;
 }
+
 
 /**
  * Creates batches from sequences of image and target tensors.
