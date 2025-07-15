@@ -171,7 +171,7 @@ export default function WordwisePage() {
           setLossHistory(prev => [...prev, { epoch: payload.epoch, loss: payload.loss }]);
           setGradientHistory(payload.gradients);
           setStatus(`Обучение: Эпоха ${payload.epoch}, Потеря: ${payload.loss.toFixed(6)}`);
-          setTrainingProgress(((payload.epoch - (lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch : 0)) / numEpochs) * 100);
+          setTrainingProgress((payload.epoch / (numEpochs + (lossHistory[0]?.epoch || 0))) * 100);
           break;
         case 'training-complete':
           setStatus('Обучение завершено. Модель готова к проверке и применению.');
