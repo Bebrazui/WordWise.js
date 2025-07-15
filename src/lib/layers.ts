@@ -118,7 +118,8 @@ export class Linear extends Layer {
     // Инициализация весов методом Glorot/Xavier Uniform
     const limit = Math.sqrt(6 / (inputSize + outputSize));
     this.weights = Tensor.randn([inputSize, outputSize], limit);
-    this.bias = Tensor.zeros([1, outputSize]); // Смещения обычно инициализируются нулями
+    // Инициализация смещений НЕ НУЛЯМИ, чтобы избежать "мертвых" нейронов
+    this.bias = Tensor.randn([1, outputSize], limit);
 
     this.weights.name = 'weights';
     this.bias.name = 'bias';
@@ -205,19 +206,19 @@ export class LSTMCell extends Layer {
 
         this.Wi = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wi.name = 'Wi';
         this.Ui = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Ui.name = 'Ui';
-        this.Bi = Tensor.zeros([1, hiddenSize]); this.Bi.name = 'Bi';
+        this.Bi = Tensor.randn([1, hiddenSize], limit_x); this.Bi.name = 'Bi';
 
         this.Wf = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wf.name = 'Wf';
         this.Uf = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Uf.name = 'Uf';
-        this.Bf = Tensor.zeros([1, hiddenSize]); this.Bf.name = 'Bf';
+        this.Bf = Tensor.randn([1, hiddenSize], limit_x); this.Bf.name = 'Bf';
 
         this.Wo = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wo.name = 'Wo';
         this.Uo = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Uo.name = 'Uo';
-        this.Bo = Tensor.zeros([1, hiddenSize]); this.Bo.name = 'Bo';
+        this.Bo = Tensor.randn([1, hiddenSize], limit_x); this.Bo.name = 'Bo';
 
         this.Wc = Tensor.randn([inputSize, hiddenSize], limit_x); this.Wc.name = 'Wc';
         this.Uc = Tensor.randn([hiddenSize, hiddenSize], limit_h); this.Uc.name = 'Uc';
-        this.Bc = Tensor.zeros([1, hiddenSize]); this.Bc.name = 'Bc';
+        this.Bc = Tensor.randn([1, hiddenSize], limit_x); this.Bc.name = 'Bc';
 
         this.parameters = [
             this.Wi, this.Ui, this.Bi,
@@ -235,20 +236,10 @@ export class LSTMCell extends Layer {
      * @returns Объект с новым скрытым состоянием (h) и состоянием ячейки (c).
      */
     forward(input: Tensor, prevH: Tensor, prevC: Tensor): { h: Tensor, c: Tensor } {
-        // Оптимизация: объединяем матричные умножения, где это возможно
-        const gates = input.dot(this.Wi).add(prevH.dot(this.Ui)).add(this.Bi).add(
-                      input.dot(this.Wf).add(prevH.dot(this.Uf)).add(this.Bf)
-                    ).add(
-                      input.dot(this.Wo).add(prevH.dot(this.Uo)).add(this.Bo)
-                    ).add(
-                      input.dot(this.Wc).add(prevH.dot(this.Uc)).add(this.Bc)
-                    );
-        
-        const hiddenSize = this.Bi.shape[1];
-        const i_t_raw = gates.slice([0, 0], [gates.shape[0], hiddenSize]);
-        const f_t_raw = gates.slice([0, hiddenSize], [gates.shape[0], hiddenSize]);
-        const o_t_raw = gates.slice([0, hiddenSize * 2], [gates.shape[0], hiddenSize]);
-        const c_tilde_t_raw = gates.slice([0, hiddenSize * 3], [gates.shape[0], hiddenSize]);
+        const i_t_raw = input.dot(this.Wi).add(prevH.dot(this.Ui)).add(this.Bi);
+        const f_t_raw = input.dot(this.Wf).add(prevH.dot(this.Uf)).add(this.Bf);
+        const o_t_raw = input.dot(this.Wo).add(prevH.dot(this.Uo)).add(this.Bo);
+        const c_tilde_t_raw = input.dot(this.Wc).add(prevH.dot(this.Uc)).add(this.Bc);
 
         const i_t = sigmoid(i_t_raw);
         const f_t = sigmoid(f_t_raw);
@@ -305,9 +296,11 @@ export class LayerNorm extends Layer {
         // Нормализация происходит по последней размерности (признакам)
         const mean = input.mean(-1, true); // [B, S, 1] or [B, 1]
         const variance = input.sub(mean).pow(2).mean(-1, true); // [B, S, 1] or [B, 1]
-        const std = variance.addScalar(this.epsilon).sqrt();
-        const x_normalized = input.sub(mean).divScalar(std.data[0]); // Simplified for now
-        return x_normalized.mul(this.gamma).add(this.beta);
+        
+        const std_inv = variance.addScalar(this.epsilon).sqrt().pow(-1);
+
+        const x_normalized = input.sub(mean).mul(std_inv);
+        return this.gamma.mul(x_normalized).add(this.beta);
     }
 }
 
