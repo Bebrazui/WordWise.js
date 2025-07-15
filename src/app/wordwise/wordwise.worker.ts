@@ -259,11 +259,12 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
     const { startWord, numWords, temperature } = payload;
     const { wordToIndex, indexToWord } = vocabData;
 
-    let currentWordSequence = startWord.toLowerCase().split(' ').filter(Boolean);
-    let fullGeneratedText = [...currentWordSequence];
+    let fullGeneratedText = startWord.toLowerCase().split(' ').filter(Boolean);
     
+    // State initialization
     let h: Tensor | undefined;
     let c: Tensor | undefined;
+    let flowStates: Tensor[] | undefined;
 
     for (let i = 0; i < numWords; i++) {
         let chosenWord: string;
@@ -275,34 +276,44 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
             const inputIndex = wordToIndex.get(lastWord) || 0;
             const inputTensor = new Tensor([inputIndex], [1, 1]); // Batch size 1, seq len 1
 
-            // Pass the state! This is the key fix.
-            const { outputLogits, h: nextH, c: nextC } = model.forward(inputTensor, h, c);
-            h = nextH; // Update state for next iteration
-            c = nextC; // Update state for next iteration
-            logits = outputLogits;
+            const result = model.forward(inputTensor, h, c);
+            h = result.h; // Update state for next iteration
+            c = result.c; // Update state for next iteration
+            logits = result.outputLogits;
             
-        } else if (model instanceof TransformerModel || model instanceof FlowNetModel) {
-            const currentSequenceIndices = currentWordSequence.slice(-model.seqLen).map(w => wordToIndex.get(w) || 0);
+        } else if (model instanceof FlowNetModel) {
+            const lastWord = fullGeneratedText[fullGeneratedText.length - 1];
+            const inputIndex = wordToIndex.get(lastWord) || 0;
+            const inputTensor = new Tensor([inputIndex], [1, 1]); // Batch size 1, seq len 1
+
+            const result = model.forward(inputTensor, flowStates);
+            flowStates = result.newStates; // Update state for next iteration
+            logits = result.outputLogits; // This is [B, S=1, V]
+            
+        } else if (model instanceof TransformerModel) {
+            const currentSequence = fullGeneratedText.slice(-model.seqLen);
+            const currentSequenceIndices = currentSequence.map(w => wordToIndex.get(w) || 0);
             while(currentSequenceIndices.length < model.seqLen) {
-                currentSequenceIndices.unshift(0);
+                currentSequenceIndices.unshift(0); // Pad with <unk> token
             }
             const inputTensor = new Tensor(currentSequenceIndices, [1, model.seqLen]);
-            const { outputLogits } = model.forward(inputTensor);
-            logits = outputLogits.slice([0, model.seqLen - 1, 0], [1, 1, vocabData.vocabSize]).reshape([1, vocabData.vocabSize]);
+            const result = model.forward(inputTensor);
+            // Get logits for the very last word in the sequence
+            logits = result.outputLogits.slice([0, model.seqLen - 1, 0], [1, 1, vocabData.vocabSize]);
         } else {
              throw new Error("Unknown model type for generation.");
         }
         
-        const result = getWordFromPrediction(logits, indexToWord, temperature, fullGeneratedText);
+        const reshapedLogits = logits.reshape([1, vocabData.vocabSize]);
+        const result = getWordFromPrediction(reshapedLogits, indexToWord, temperature, fullGeneratedText);
         chosenWord = result.chosenWord;
         topPredictions = result.topPredictions;
         
         if (chosenWord === '<unk>' || chosenWord === 'вопрос' || chosenWord === 'ответ') {
-            if (chosenWord === '<unk>') break;
-            continue;
+            if (chosenWord === '<unk>') break; // Stop if we generate unknown token
+            continue; // Skip special tokens but continue generating
         }
         
-        currentWordSequence.push(chosenWord);
         fullGeneratedText.push(chosenWord);
 
         self.postMessage({

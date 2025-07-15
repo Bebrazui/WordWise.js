@@ -300,12 +300,12 @@ export class FlowNetModel extends BaseModelClass {
         this.outputLayer = new Linear(embeddingDim, vocabSize);
     }
     
-    forward(input: Tensor): { outputLogits: Tensor } {
+    forward(input: Tensor, prevStates?: Tensor[]): { outputLogits: Tensor, newStates: Tensor[] } {
         const [batchSize, seqLen] = input.shape;
         let x = this.embeddingLayer.forward(input); // [B, S, D]
 
-        // Initialize states for all layers
-        let states = this.flownetBlocks.map(() => Tensor.zeros([batchSize, this.embeddingDim]));
+        // Initialize states if not provided
+        let states = prevStates || this.flownetBlocks.map(() => Tensor.zeros([batchSize, this.embeddingDim]));
         
         const outputs: Tensor[] = [];
         // Process sequence step-by-step
@@ -315,14 +315,16 @@ export class FlowNetModel extends BaseModelClass {
             for(let l = 0; l < this.numLayers; l++) {
                 const { output, newState } = this.flownetBlocks[l].forward(stepInput, states[l]);
                 stepInput = output;
-                states[l] = newState.detach(); // Detach to prevent gradients from flowing endlessly through time
+                 // For training, detach to prevent gradients from flowing endlessly through time
+                 // For generation, we also detach as we handle state explicitly.
+                states[l] = newState.detach();
             }
             outputs.push(stepInput.reshape([batchSize, 1, this.embeddingDim]));
         }
 
         const stackedOutputs = Tensor.concat(outputs, 1); // Concat along sequence dimension
         const outputLogits = this.outputLayer.forward(stackedOutputs); // [B, S, V]
-        return { outputLogits };
+        return { outputLogits, newStates: states };
     }
 
     getParameters(): Tensor[] {
