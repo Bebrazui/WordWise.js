@@ -1,7 +1,6 @@
-
 // src/utils/tokenizer.ts
 import { Tensor } from '../lib/tensor';
-import { sampleNextWord } from './generation-algorithms';
+import { softmax } from '../lib/layers';
 
 /**
  * Строит словарь из текстового корпуса.
@@ -54,11 +53,9 @@ export function wordsToTargetTensors(words: string[], wordToIndex: Map<string, n
 
 /**
  * Выбирает слово из выходного тензора модели.
- * Эта функция является оберткой над сложной логикой в `generation-algorithms.ts`.
  * @param predictionLogits Тензор сырых логитов предсказания: [1, vocabSize].
  * @param indexToWord Карта индексов в слова.
  * @param temperature Параметр температуры для сэмплирования.
- * @param generatedSequence Массив уже сгенерированных слов для применения штрафа.
  * @returns Объект с выбранным словом и топ-5 предсказаниями.
  */
 export function getWordFromPrediction(
@@ -67,10 +64,53 @@ export function getWordFromPrediction(
   temperature: number = 1.0,
   generatedSequence: string[] = [],
 ): { chosenWord: string; topPredictions: { word: string; probability: number }[] } {
-    return sampleNextWord(
-        predictionLogits,
-        indexToWord,
-        temperature,
-        generatedSequence
-    );
+  if (predictionLogits.shape.length !== 2 || predictionLogits.shape[0] !== 1) {
+    throw new Error(`Prediction tensor must have shape [1, vocabSize]. Got [${predictionLogits.shape}]`);
+  }
+  
+  // Apply temperature to logits
+  const logits = predictionLogits.divScalar(temperature);
+  
+  // Get probabilities using softmax
+  const probabilitiesTensor = softmax(logits);
+  const probabilities = Array.from(probabilitiesTensor.data);
+
+  // --- Simple Repetition Penalty ---
+  const penalty = 1.2;
+  const recentWords = new Set(generatedSequence.slice(-5));
+  for(const [idx, word] of indexToWord.entries()) {
+      if (recentWords.has(word)) {
+          probabilities[idx] /= penalty;
+      }
+  }
+
+  // --- Get Top 5 Predictions for display ---
+  const predictionsWithIndices = probabilities.map((probability, index) => ({
+    word: indexToWord.get(index) || '<unk>',
+    probability,
+    index,
+  }));
+  predictionsWithIndices.sort((a, b) => b.probability - a.probability);
+  const topPredictions = predictionsWithIndices.slice(0, 5);
+
+
+  // --- Simple sampling from the adjusted probabilities ---
+  const rand = Math.random();
+  let cumulativeProb = 0;
+  let chosenIndex = predictionsWithIndices[0].index; // Fallback to the best one
+  
+  // Renormalize probabilities after penalty
+  const totalProb = predictionsWithIndices.reduce((sum, p) => sum + p.probability, 0);
+
+  for (const pred of predictionsWithIndices) {
+    cumulativeProb += pred.probability / totalProb;
+    if (rand < cumulativeProb) {
+      chosenIndex = pred.index;
+      break;
+    }
+  }
+
+  const chosenWord = indexToWord.get(chosenIndex) || '<unk>';
+
+  return { chosenWord, topPredictions };
 }
