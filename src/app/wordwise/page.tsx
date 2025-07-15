@@ -116,15 +116,16 @@ export default function WordwisePage() {
       switch (type) {
         case 'worker-ready':
           setStatus('Worker готов. Можно инициализировать модель.');
+          // If a model is in zustand, send it to the worker to load.
+          // The UI will update once the worker confirms the model is loaded.
           if (modelJson) {
-             console.log("Found model in zustand, loading into worker...");
-             // Send model and current corpus to worker
-             worker.postMessage({ 
-                 type: 'load-model', 
-                 payload: { 
-                     modelJson,
-                     textCorpus: trainingData.type === 'text' ? trainingData.corpus : ''
-                 } 
+             console.log("Found model in zustand, sending to worker to load...");
+             workerRef.current?.postMessage({
+                type: 'load-model',
+                payload: {
+                    modelJson,
+                    textCorpus: trainingData.type === 'text' ? trainingData.corpus : ''
+                }
              });
           }
           break;
@@ -142,7 +143,7 @@ export default function WordwisePage() {
           setStatus('Модель успешно загружена. Готова к дообучению или использованию.');
           setOutput(`Загружена модель ${payload.architecture.type}.`);
           setIsInitialized(true);
-          setIsTrained(true);
+          setIsTrained(true); // A loaded model is considered trained.
           setLossHistory([]);
           setGradientHistory([]);
           setModelArch(payload.architecture.type);
@@ -164,7 +165,7 @@ export default function WordwisePage() {
             setFlowNumLayers(architecture.numLayers);
           }
 
-          toast({ title: "Успех", description: "Модель загружена в воркер." });
+          toast({ title: "Успех", description: "Модель загружена и готова." });
           break;
         case 'progress':
           setLossHistory(prev => [...prev, { epoch: payload.epoch, loss: payload.loss }]);
@@ -322,13 +323,7 @@ export default function WordwisePage() {
             // Validate JSON before sending to worker
             JSON.parse(jsonContent);
             setModelJson(jsonContent); // Save to zustand first
-            workerRef.current?.postMessage({ 
-                type: 'load-model', 
-                payload: { 
-                    modelJson: jsonContent,
-                    textCorpus: trainingData.type === 'text' ? trainingData.corpus : ''
-                } 
-            });
+            // The useEffect hook will detect this change and message the worker
             toast({ title: "Загрузка", description: "Модель отправлена в воркер для обработки." });
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Неверный формат файла';

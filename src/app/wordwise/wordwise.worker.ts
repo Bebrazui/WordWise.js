@@ -53,16 +53,16 @@ async function loadModel(payload: {modelJson: string, textCorpus: string}) {
     model = loaded.model;
     vocabData = loaded.vocabData;
     
-    // After loading a model, we need to regenerate trainingData based on the model's vocab
-    // and the *current* text corpus from the UI.
+    // Invalidate old training data
+    trainingData = null;
+
     if ('vocab' in vocabData && textCorpus) {
         const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
+        // Ensure that the loaded vocabulary is used for tensor creation.
         trainingData = {
            inputs: wordsToInputTensors(words, vocabData.wordToIndex),
            targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
         };
-    } else {
-        trainingData = null; // Invalidate training data if not a text model or no corpus
     }
 
     if (model instanceof TransformerModel) {
@@ -78,6 +78,7 @@ async function loadModel(payload: {modelJson: string, textCorpus: string}) {
     const wordsForSampling = ('vocab' in vocabData && vocabData.vocab) ? vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2) : [];
     const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
     
+    // Only send model-loaded message AFTER trainingData is also ready.
     self.postMessage({
         type: 'model-loaded',
         payload: {
@@ -134,7 +135,10 @@ async function initialize(payload: any) {
  */
 async function train(payload: { numEpochs: number, learningRate: number, batchSize: number, lossHistory: {epoch: number, loss: number}[] }) {
   if (!model || !vocabData || !trainingData) {
-    throw new Error('Model is not initialized or no training data is available.');
+    // Silently ignore if not ready, preventing the crash.
+    // The UI logic should prevent this from being called in the first place.
+    console.warn("Training was called, but worker is not ready. Ignoring.");
+    return;
   }
 
   const { numEpochs, learningRate, batchSize, lossHistory } = payload;
