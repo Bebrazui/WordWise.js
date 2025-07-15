@@ -1,28 +1,17 @@
 
 import { create } from 'zustand';
-import type { WordWiseModel } from '@/lib/model';
-
-type VocabData = {
-  vocab: string[];
-  wordToIndex: Map<string, number>;
-  indexToWord: Map<number, string>;
-  vocabSize: number;
-};
+import type { AnyModel, VocabData } from '@/lib/model';
 
 type TrainedModelState = {
-  trainedModel: WordWiseModel | null;
-  vocabData: VocabData | null;
+  modelJson: string | null; // Store the serialized model as a JSON string
   temperature: number;
-  setTrainedModel: (model: WordWiseModel | null) => void;
-  setVocabData: (data: VocabData | null) => void;
+  setModelJson: (json: string | null) => void;
   setTemperature: (temp: number) => void;
 };
 
 export const useTrainedModel = create<TrainedModelState>((set) => ({
-  trainedModel: null,
-  vocabData: null,
+  modelJson: null,
   temperature: 0.8,
-  setTrainedModel: (model) => set({ trainedModel: model }),
-  setVocabData: (data) => set({ vocabData: data }),
+  setModelJson: (json) => set({ modelJson: json }),
   setTemperature: (temp) => set({ temperature: temp }),
 }));

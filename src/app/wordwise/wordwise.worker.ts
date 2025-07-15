@@ -1,3 +1,4 @@
+
 // src/app/wordwise/wordwise.worker.ts
 /// <reference lib="webworker" />
 
@@ -165,55 +166,50 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
     const { startWord, numWords, temperature } = payload;
     const { wordToIndex, indexToWord } = vocabData;
 
-    let currentWord = startWord.toLowerCase();
-    if (!wordToIndex.has(currentWord)) {
-        currentWord = '<unk>';
-    }
+    let currentWordSequence = startWord.toLowerCase().split(' ').filter(Boolean);
 
-    let generatedSequence = [currentWord];
-    let finalPredictions: any[] = [];
+    for (let i = 0; i < numWords; i++) {
+        let chosenWord: string;
+        let topPredictions: any[] = [];
 
-    if (model instanceof WordWiseModel) {
-        let {h0: h, c0: c} = model.initializeStates(1);
-        for (let i = 0; i < numWords; i++) {
-            const inputTensor = new Tensor([wordToIndex.get(currentWord) || 0], [1]);
-            const { outputLogits, h: nextH, c: nextC } = model.forward(inputTensor, h, c);
-            h = nextH.detach(); c = nextC.detach();
-            const { chosenWord, topPredictions } = getWordFromPrediction(outputLogits, indexToWord, temperature, generatedSequence);
-            finalPredictions = topPredictions;
-            if (chosenWord === '<unk>') break;
-            generatedSequence.push(chosenWord);
-            currentWord = chosenWord;
-        }
-    } else if (model instanceof TransformerModel || model instanceof FlowNetModel) {
-         for (let i = 0; i < numWords; i++) {
-            const currentSequenceIndices = generatedSequence.slice(-model.seqLen).map(w => wordToIndex.get(w) || 0);
-            // Pad if necessary
+        if (model instanceof WordWiseModel) {
+            // LSTM generation is stateful and one-word-at-a-time, not implemented here for streaming
+            throw new Error("Streaming generation for LSTM not implemented in this worker.");
+        } else if (model instanceof TransformerModel || model instanceof FlowNetModel) {
+            const currentSequenceIndices = currentWordSequence.slice(-model.seqLen).map(w => wordToIndex.get(w) || 0);
             while(currentSequenceIndices.length < model.seqLen) {
                 currentSequenceIndices.unshift(0); // Pad with <unk>
             }
             const inputTensor = new Tensor(currentSequenceIndices, [1, model.seqLen]);
-            const { outputLogits } = model.forward(inputTensor); // [1, seqLen, vocabSize]
-            // We only care about the prediction for the very last token in the sequence
+            const { outputLogits } = model.forward(inputTensor);
             const lastTimeStepLogits = outputLogits.slice([0, model.seqLen - 1, 0], [1, 1, vocabData.vocabSize]).reshape([1, vocabData.vocabSize]);
-            const { chosenWord, topPredictions } = getWordFromPrediction(lastTimeStepLogits, indexToWord, temperature, generatedSequence);
-            finalPredictions = topPredictions;
-            if (chosenWord === '<unk>') break;
-            generatedSequence.push(chosenWord);
-            currentWord = chosenWord;
-         }
+            const result = getWordFromPrediction(lastTimeStepLogits, indexToWord, temperature, currentWordSequence);
+            chosenWord = result.chosenWord;
+            topPredictions = result.topPredictions;
+        } else {
+             throw new Error("Unknown model type for generation.");
+        }
+        
+        if (chosenWord === '<unk>' || chosenWord === 'вопрос' || chosenWord === 'ответ') {
+            if (chosenWord === '<unk>') break; // Stop on unknown
+            continue; // Skip special tokens but continue generating
+        }
+        
+        currentWordSequence.push(chosenWord);
+
+        self.postMessage({
+            type: 'generation-chunk',
+            payload: {
+                text: currentWordSequence.join(' '),
+                predictions: topPredictions
+            }
+        });
+        // Allow the event loop to process messages
+        await new Promise(resolve => setTimeout(resolve, 50)); 
     }
 
-    self.postMessage({
-        type: 'generation-result',
-        payload: {
-            text: generatedSequence.join(' '),
-            predictions: finalPredictions
-        }
-    });
+    self.postMessage({ type: 'generation-complete' });
 }
 
 
 self.postMessage({ type: 'worker-ready' });
-
-    

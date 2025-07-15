@@ -1,3 +1,4 @@
+
 // src/lib/model.ts
 import { Embedding, Linear, LSTMCell, Layer, crossEntropyLossWithSoftmaxGrad, PositionalEmbedding } from './layers';
 import { TransformerEncoderBlock } from './transformer';
@@ -439,5 +440,3 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
 
     return { model, vocabData };
 }
-
-    

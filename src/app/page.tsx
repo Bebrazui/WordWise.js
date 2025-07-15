@@ -12,8 +12,6 @@ import { PredictionVisualizer, Prediction } from '@/components/ui/prediction-vis
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 import { useTrainedModel } from '@/hooks/use-trained-model';
-import { Tensor } from '@/lib/tensor';
-import { getWordFromPrediction } from '@/utils/tokenizer';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -26,11 +24,59 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [latestPredictions, setLatestPredictions] = useState<Prediction[]>([]);
   const [showPredictions, setShowPredictions] = useState(true);
-  const { trainedModel, vocabData, temperature } = useTrainedModel();
-
+  const { modelJson, temperature } = useTrainedModel();
+  const workerRef = useRef<Worker | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-  const modelName = trainedModel ? "WordWise.js (Обученная)" : "WordWise.js (Прототип)";
+  const modelName = modelJson ? `WordWise.js (${JSON.parse(modelJson).architecture.type})` : "WordWise.js (Прототип)";
+
+  // Setup Web Worker for chat generation
+  useEffect(() => {
+    const worker = new Worker(new URL('./wordwise/wordwise.worker.ts', import.meta.url));
+    workerRef.current = worker;
+
+    worker.onmessage = (event: MessageEvent) => {
+      const { type, payload } = event.data;
+      switch (type) {
+        case 'worker-ready':
+           if (modelJson) {
+              console.log("Chat worker ready. Loading model from store...");
+              worker.postMessage({ type: 'load-model', payload: { modelJson } });
+           }
+           break;
+        case 'generation-chunk':
+           setMessages(prev => {
+                const newMessages = [...prev];
+                const lastMessage = newMessages[newMessages.length - 1];
+                if (lastMessage && lastMessage.role === 'assistant') {
+                    lastMessage.content = payload.text;
+                    if (payload.predictions) {
+                        setLatestPredictions(payload.predictions);
+                    }
+                }
+                return newMessages;
+            });
+            break;
+        case 'generation-complete':
+            setIsLoading(false);
+            if (!showPredictions) {
+                setLatestPredictions([]);
+            }
+            break;
+        case 'model-loaded':
+            console.log("Model loaded into chat worker.");
+            break;
+        case 'error':
+            setIsLoading(false);
+            setMessages(prev => [...prev, { role: 'assistant', content: `Произошла ошибка в воркере: ${payload.message}` }]);
+            break;
+      }
+    };
+    
+    return () => {
+      worker.terminate();
+    };
+  }, [modelJson, showPredictions]); // Re-setup worker if model changes
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -41,76 +87,28 @@ export default function Home() {
     }
   }, [messages]);
 
-  const generateTextWithModel = async (startWord: string, numWords: number) => {
-    if (!trainedModel || !vocabData) {
-      setMessages(prev => [...prev, { role: 'assistant', content: "Модель не обучена. Перейдите на страницу обучения." }]);
-      setIsLoading(false);
-      return;
-    }
-
-    const { wordToIndex, indexToWord } = vocabData;
-    let currentInputWord = startWord.toLowerCase().split(' ').pop() || '<unk>';
-
-    if (!wordToIndex.has(currentInputWord)) {
-        currentInputWord = '<unk>';
-    }
-
-    let generatedSequence: string[] = [];
-    let h = trainedModel.initializeStates(1).h0;
-    let c = trainedModel.initializeStates(1).c0;
-    
-    let botResponse: ChatMessage = { role: 'assistant', content: '' };
-    setMessages(prev => [...prev, botResponse]);
-
-    for (let i = 0; i < numWords; i++) {
-      const inputTensor = new Tensor([wordToIndex.get(currentInputWord) || 0], [1]);
-      const { outputLogits, h: nextH, c: nextC } = trainedModel.forward(inputTensor, h, c);
-      h = nextH;
-      c = nextC;
-
-      const { chosenWord, topPredictions } = getWordFromPrediction(outputLogits, indexToWord, temperature, generatedSequence);
-      setLatestPredictions(topPredictions);
-      
-      if (chosenWord === 'вопрос' || chosenWord === 'ответ') {
-          await new Promise(resolve => setTimeout(resolve, 50));
-          continue;
-      };
-
-      generatedSequence.push(chosenWord);
-      currentInputWord = chosenWord;
-
-      setMessages(prev => {
-        const newMessages = [...prev];
-        const lastMessage = newMessages[newMessages.length - 1];
-        if (lastMessage.role === 'assistant') {
-            lastMessage.content = generatedSequence.join(' ');
-        }
-        return newMessages;
-      });
-
-      if (chosenWord === '<unk>') break;
-
-      await new Promise(resolve => setTimeout(resolve, 150));
-    }
-    
-    if (!showPredictions) {
-        setLatestPredictions([]);
-    }
-  };
-
-
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
     const userMessage: ChatMessage = { role: 'user', content: input };
     setMessages(prev => [...prev, userMessage]);
+    
     const currentInput = input;
     setInput('');
     setIsLoading(true);
 
-    if (trainedModel && vocabData) {
-        await generateTextWithModel(currentInput, 15);
+    if (modelJson) {
+      // Create an empty message shell for the assistant
+      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+      workerRef.current?.postMessage({
+        type: 'generate',
+        payload: {
+          startWord: currentInput,
+          temperature,
+          numWords: 20
+        }
+      });
     } else {
         const botResponseContent = `Я прототип. Модель WordWise.js еще не обучена. Перейдите в раздел обучения, чтобы научить меня отвечать.`;
         const botResponse: ChatMessage = {
@@ -118,9 +116,8 @@ export default function Home() {
             content: botResponseContent
         };
         setMessages(prev => [...prev, botResponse]);
+        setIsLoading(false);
     }
-    
-    setIsLoading(false);
   };
 
   return (
@@ -190,6 +187,16 @@ export default function Home() {
                   )}
                 </div>
               ))}
+              {isLoading && messages[messages.length-1]?.role === 'assistant' && (
+                  <div className="flex items-start gap-3">
+                     <Avatar className="w-8 h-8">
+                       <AvatarFallback>AI</AvatarFallback>
+                     </Avatar>
+                     <div className="rounded-lg px-3 py-2 bg-muted">
+                        <p className="text-sm">...</p>
+                     </div>
+                  </div>
+              )}
             </div>
           </ScrollArea>
         </CardContent>

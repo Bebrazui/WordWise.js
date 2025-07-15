@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
@@ -5,7 +6,6 @@ import Link from 'next/link';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Info, Upload, Download, Settings, TestTube2, CheckCircle, ImagePlus, FileText, BrainCircuit } from 'lucide-react';
 
-import { serializeModel, deserializeModel, AnyModel, WordWiseModel, TransformerModel, FlowNetModel, VocabData } from '../../lib/model';
 import { getWordFromPrediction } from '../../utils/tokenizer';
 import { imageToTensor } from '../../utils/image-processor';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -34,7 +34,6 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion"
-import { Tensor } from '@/lib/tensor';
 
 
 const defaultCorpus = `вопрос: привет ответ: привет как твои дела
@@ -133,7 +132,7 @@ export default function WordwisePage() {
           setOutput(`Модель (${payload.type}) инициализирована. Размер словаря: ${payload.vocabSize}.`);
           break;
         case 'model-loaded':
-          setStatus('Модель успешно загружена из хранилища. Готова к дообучению или использованию.');
+          setStatus('Модель успешно загружена. Готова к дообучению или использованию.');
           setOutput(`Загружена модель ${payload.architecture.type}.`);
           setIsInitialized(true);
           setIsTrained(true);
@@ -157,7 +156,7 @@ export default function WordwisePage() {
             setFlowNumLayers(architecture.numLayers);
           }
 
-          toast({ title: "Успех", description: "Модель из хранилища загружена в воркер." });
+          toast({ title: "Успех", description: "Модель загружена в воркер." });
           break;
         case 'progress':
           setLossHistory(prev => [...prev, { epoch: payload.epoch, loss: payload.loss }]);
@@ -177,9 +176,11 @@ export default function WordwisePage() {
            setStatus(`Обучение остановлено на эпохе ${payload.epoch}.`);
            setIsTraining(false);
            break;
-        case 'generation-result':
-            setOutput(payload.text);
+        case 'generation-chunk':
+            setOutput(prev => payload.text);
             setLatestPredictions(payload.predictions);
+            break;
+        case 'generation-complete':
             setStatus('Генерация текста завершена.');
             break;
         case 'error':
@@ -267,6 +268,7 @@ export default function WordwisePage() {
       return;
     }
     setStatus(`Генерация текста, начало: "${startWord}"...`);
+    setOutput(startWord);
     setLatestPredictions([]);
     workerRef.current?.postMessage({
         type: 'generate',
@@ -621,5 +623,3 @@ export default function WordwisePage() {
     </div>
   );
 }
-
-    
