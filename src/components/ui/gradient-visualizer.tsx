@@ -32,10 +32,10 @@ export function GradientVisualizer({ history }: GradientVisualizerProps) {
         ) : (
           <div className="space-y-3">
             {history.map(({ layer, avgGrad }) => {
-              const gradMagnitude = Math.min(avgGrad, MAX_GRAD_VALUE) / MAX_GRAD_VALUE;
+              const gradMagnitude = Math.min(Math.abs(avgGrad), MAX_GRAD_VALUE) / MAX_GRAD_VALUE;
               const barWidth = `${gradMagnitude * 100}%`;
               // Color changes from blue (low grad) to red (high grad)
-              const hue = (1 - gradMagnitude) * 240;
+              const hue = (1 - gradMagnitude) * 240; // 240 is blue, 0 is red
 
               return (
                 <div key={layer}>
