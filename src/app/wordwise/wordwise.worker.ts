@@ -53,17 +53,18 @@ async function loadModel(payload: {modelJson: string, textCorpus: string}) {
     model = loaded.model;
     vocabData = loaded.vocabData;
     
-    // Invalidate old training data
     trainingData = null;
 
     if ('vocab' in vocabData && textCorpus) {
         const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
-        // Ensure that the loaded vocabulary is used for tensor creation.
         trainingData = {
            inputs: wordsToInputTensors(words, vocabData.wordToIndex),
            targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
         };
+    } else {
+        throw new Error("Cannot load a model without a text corpus to create training data.");
     }
+
 
     if (model instanceof TransformerModel) {
         modelType = 'transformer';
@@ -78,7 +79,6 @@ async function loadModel(payload: {modelJson: string, textCorpus: string}) {
     const wordsForSampling = ('vocab' in vocabData && vocabData.vocab) ? vocabData.vocab.filter(w => !['<unk>', 'вопрос', 'ответ'].includes(w) && w.length > 2) : [];
     const shuffled = wordsForSampling.sort(() => 0.5 - Math.random());
     
-    // Only send model-loaded message AFTER trainingData is also ready.
     self.postMessage({
         type: 'model-loaded',
         payload: {
@@ -110,7 +110,6 @@ async function initialize(payload: any) {
     throw new Error('Unknown initialization type');
   }
 
-  // Common data preparation for all text models
   const words = textCorpus.toLowerCase().match(/[a-zа-яё]+/g) || [];
   trainingData = {
      inputs: wordsToInputTensors(words, vocabData.wordToIndex),
@@ -135,9 +134,7 @@ async function initialize(payload: any) {
  */
 async function train(payload: { numEpochs: number, learningRate: number, batchSize: number, lossHistory: {epoch: number, loss: number}[] }) {
   if (!model || !vocabData || !trainingData) {
-    // Silently ignore if not ready, preventing the crash.
-    // The UI logic should prevent this from being called in the first place.
-    console.warn("Training was called, but worker is not ready. Ignoring.");
+    self.postMessage({ type: 'error', payload: { message: 'Model is not initialized or no training data is available.' } });
     return;
   }
 
@@ -165,9 +162,10 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
       initialEpoch: lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch : 0
   }, callbacks);
   
-  if (model.stopTraining) {
+  if (model.stopTraining && model && vocabData) {
        const lastEpoch = lossHistory.length > 0 ? lossHistory[lossHistory.length - 1].epoch : 0;
-       self.postMessage({ type: 'training-stopped', payload: { epoch: lastEpoch } });
+       const modelJson = serializeModel(model, vocabData);
+       self.postMessage({ type: 'training-stopped', payload: { epoch: lastEpoch, modelJson } });
        return;
   }
   
