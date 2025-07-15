@@ -97,167 +97,77 @@ export class Tensor {
     }
     return new Tensor(data, shape);
   }
+  
+  // --- Broadcasting and Element-wise Operations ---
 
-  // --- Базовые арифметические операции ---
+  private _broadcastOp(
+    other: Tensor,
+    op: (a: number, b: number) => number,
+    thisGradFn: (grad: Tensor, a: Tensor, b: Tensor) => Tensor,
+    otherGradFn: (grad: Tensor, a: Tensor, b: Tensor) => Tensor,
+  ): Tensor {
+      const broadcastShape = this.getBroadcastShape(this.shape, other.shape);
+      const resultSize = broadcastShape.reduce((a, b) => a * b, 1);
+      const resultData = new Float32Array(resultSize);
+      
+      const thisStrides = this.getStrides(this.shape);
+      const otherStrides = this.getStrides(other.shape);
+      const resultStrides = this.getStrides(broadcastShape);
 
-  /**
-   * Поэлементное сложение двух тензоров. Поддерживает бродкастинг.
-   * @param other Другой тензор.
-   * @returns Новый Tensor с результатом сложения.
-   */
-    add(other: Tensor, inPlace: boolean = false): Tensor {
-        const result = inPlace ? this : new Tensor(new Float32Array(this.data), this.shape);
-
-        // Handle scalar broadcasting
-        if (other.size === 1) {
-            for (let i = 0; i < result.size; i++) {
-                result.data[i] += other.data[0];
-            }
-        }
-        // Handle broadcasting of a row vector [1, N] to a matrix [M, N]
-        else if (this.shape.length === 2 && other.shape.length === 2 && this.shape[0] > 1 && other.shape[0] === 1 && this.shape[1] === other.shape[1]) {
-            const numRows = this.shape[0];
-            const numCols = this.shape[1];
-            for (let i = 0; i < numRows; i++) {
-                for (let j = 0; j < numCols; j++) {
-                    result.data[i * numCols + j] += other.data[j];
-                }
-            }
-        }
-        // Broadcasting for Positional Encodings: [B, S, D] + [S, D]
-        else if (this.shape.length === 3 && other.shape.length === 2 && this.shape[1] === other.shape[0] && this.shape[2] === other.shape[1]) {
-            const [batchSize, seqLen, dModel] = this.shape;
-            for (let b = 0; b < batchSize; b++) {
-                for (let s = 0; s < seqLen; s++) {
-                    for (let d = 0; d < dModel; d++) {
-                        result.data[b * seqLen * dModel + s * dModel + d] += other.data[s * dModel + d];
-                    }
-                }
-            }
-        }
-        else { // Element-wise addition
-            if (!this.shape.every((dim, i) => dim === other.shape[i])) {
-                 throw new Error(`Tensors must have compatible shapes for addition (broadcasting not fully supported): [${this.shape}] vs [${other.shape}]`);
-            }
-            for (let i = 0; i < result.size; i++) {
-                result.data[i] += other.data[i];
-            }
-        }
-
-        // --- Autograd ---
-        if (!inPlace && !this._isDetached && !other._isDetached) {
-            result._parents.push(
-                {
-                    tensor: this,
-                    gradFn: (grad) => grad // Simple case
-                },
-                {
-                    tensor: other,
-                    gradFn: (grad) => {
-                        // TODO: Implement proper gradient calculation for all broadcasting cases
-                        if (other.size === 1) { // Gradient for scalar
-                            return new Tensor([grad.data.reduce((a, b) => a + b, 0)], [1]);
-                        }
-                         if (other.shape.length === 2 && grad.shape.length === 3) { // Positional encoding case
-                            const [batchSize, seqLen, dModel] = grad.shape;
-                            const otherGradData = new Float32Array(other.size).fill(0);
-                            for (let b = 0; b < batchSize; b++) {
-                                for(let s=0; s < seqLen; s++) {
-                                    for(let d=0; d < dModel; d++) {
-                                        otherGradData[s * dModel + d] += grad.data[b * seqLen * dModel + s * dModel + d];
-                                    }
-                                }
-                            }
-                             return new Tensor(otherGradData, other.shape);
-                        }
-                        if (other.shape.length === 2 && other.shape[0] === 1) { // Gradient for row vector
-                            const biasGradData = new Float32Array(other.size).fill(0);
-                            const numRows = grad.shape[0];
-                            const numCols = grad.shape[1];
-                            for (let i = 0; i < numRows; i++) {
-                                for (let j = 0; j < numCols; j++) {
-                                    biasGradData[j] += grad.data[i * numCols + j];
-                                }
-                            }
-                            return new Tensor(biasGradData, other.shape);
-                        }
-                        return grad; // Gradient for element-wise
-                    }
-                }
-            );
-        }
-
-        return result;
-    }
-
-  /**
-   * Поэлементное вычитание одного тензора из другого.
-   * @param other Вычитаемый тензор.
-   * @returns Новый Tensor с результатом вычитания.
-   */
-  sub(other: Tensor): Tensor {
-    // Re-use `add` logic by negating `other`
-    const negativeOther = other.mul(new Tensor([-1], [1]));
-    return this.add(negativeOther);
-  }
-
-  /**
-   * Поэлементное умножение двух тензоров. Поддерживает бродкастинг.
-   * @param other Другой тензор.
-   * @returns Новый Tensor с результатом умножения.
-   */
-  mul(other: Tensor): Tensor {
-    let result: Tensor;
-    if (this.shape.every((dim, i) => dim === other.shape[i])) {
-      // Element-wise multiplication
-      const resultData = new Float32Array(this.size);
-      for (let i = 0; i < this.size; i++) {
-        resultData[i] = this.data[i] * other.data[i];
+      for (let i = 0; i < resultData.length; i++) {
+          const indices = this.getIndices(i, resultStrides);
+          const thisIndex = this.getBroadcastIndex(indices, this.shape, broadcastShape, thisStrides);
+          const otherIndex = this.getBroadcastIndex(indices, other.shape, broadcastShape, otherStrides);
+          resultData[i] = op(this.data[thisIndex], other.data[otherIndex]);
       }
-      result = new Tensor(resultData, this.shape);
+      const result = new Tensor(resultData, broadcastShape);
+
       if (!this._isDetached && !other._isDetached) {
-        result._parents.push(
-          { tensor: this, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * other.data[i]), grad.shape) },
-          { tensor: other, gradFn: (grad) => new Tensor(grad.data.map((g, i) => g * this.data[i]), grad.shape) }
-        );
+          result._parents.push({
+              tensor: this,
+              gradFn: (grad) => {
+                  const gradForThis = thisGradFn(grad, this, other);
+                  return this.sumBroadcastGrad(gradForThis, this.shape);
+              }
+          }, {
+              tensor: other,
+              gradFn: (grad) => {
+                  const gradForOther = otherGradFn(grad, this, other);
+                  return this.sumBroadcastGrad(gradForOther, other.shape);
+              }
+          });
       }
-    } else {
-        // Broadcasting logic
-        const broadcastShape = this.getBroadcastShape(this.shape, other.shape);
-        const resultData = new Float32Array(broadcastShape.reduce((a, b) => a * b, 1));
-        
-        const thisStrides = this.getStrides(this.shape);
-        const otherStrides = this.getStrides(other.shape);
-        const resultStrides = this.getStrides(broadcastShape);
-
-        for (let i = 0; i < resultData.length; i++) {
-            const indices = this.getIndices(i, resultStrides);
-            const thisIndex = this.getBroadcastIndex(indices, this.shape, broadcastShape, thisStrides);
-            const otherIndex = this.getBroadcastIndex(indices, other.shape, broadcastShape, otherStrides);
-            resultData[i] = this.data[thisIndex] * other.data[otherIndex];
-        }
-        result = new Tensor(resultData, broadcastShape);
-
-        if (!this._isDetached && !other._isDetached) {
-            result._parents.push({
-                tensor: this,
-                gradFn: (grad) => {
-                    const gradForThis = grad.mul(other);
-                    return this.sumBroadcastGrad(gradForThis, this.shape);
-                }
-            }, {
-                tensor: other,
-                gradFn: (grad) => {
-                    const gradForOther = grad.mul(this);
-                    return this.sumBroadcastGrad(gradForOther, other.shape);
-                }
-            });
-        }
-    }
-    return result;
+      return result;
   }
 
-    divScalar(scalar: number): Tensor {
+  add(other: Tensor): Tensor {
+    return this._broadcastOp(
+      other,
+      (a, b) => a + b,
+      (grad, a, b) => grad, // d/da (a+b) = 1
+      (grad, a, b) => grad  // d/db (a+b) = 1
+    );
+  }
+
+  sub(other: Tensor): Tensor {
+      return this._broadcastOp(
+          other,
+          (a, b) => a - b,
+          (grad, a, b) => grad, // d/da (a-b) = 1
+          (grad, a, b) => grad.mul(new Tensor([-1], [1])) // d/db (a-b) = -1
+      );
+  }
+
+  mul(other: Tensor): Tensor {
+      return this._broadcastOp(
+          other,
+          (a, b) => a * b,
+          (grad, a, b) => grad.mul(b), // d/da (a*b) = b
+          (grad, a, b) => grad.mul(a)  // d/db (a*b) = a
+      );
+  }
+
+  divScalar(scalar: number): Tensor {
         const resultData = new Float32Array(this.size);
         for (let i = 0; i < this.size; i++) {
             resultData[i] = this.data[i] / scalar;
@@ -439,11 +349,14 @@ export class Tensor {
         let index = 0;
         const ndimOriginal = originalShape.length;
         const ndimBroadcast = broadcastShape.length;
+
         for (let i = 0; i < ndimBroadcast; i++) {
-            const originalDimIndex = ndimOriginal - 1 - (ndimBroadcast - 1 - i);
+            // Align from the right
+            const originalDimIndex = ndimOriginal - (ndimBroadcast - i);
             if (originalDimIndex >= 0) {
                 const resultIndex = resultIndices[i];
                 const originalDim = originalShape[originalDimIndex];
+                // Use modulo for broadcasting dimensions of size 1
                 index += (resultIndex % originalDim) * originalStrides[originalDimIndex];
             }
         }
@@ -452,14 +365,20 @@ export class Tensor {
     
     private sumBroadcastGrad(grad: Tensor, originalShape: number[]): Tensor {
         let summedGrad = grad;
-        while (summedGrad.shape.length > originalShape.length) {
+        let numDimsToReduce = summedGrad.shape.length - originalShape.length;
+        
+        // Sum across extra leading dimensions
+        for(let i=0; i<numDimsToReduce; i++) {
             summedGrad = summedGrad.sum(0, false);
         }
+
+        // Sum across broadcasted dimensions (where original shape was 1)
         for (let i = 0; i < originalShape.length; i++) {
             if (originalShape[i] === 1 && summedGrad.shape[i] > 1) {
                 summedGrad = summedGrad.sum(i, true);
             }
         }
+        
         return summedGrad.reshape(originalShape);
     }
 
