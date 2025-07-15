@@ -1,3 +1,4 @@
+
 // src/utils/batching.ts
 import { Tensor } from '../lib/tensor';
 
@@ -32,6 +33,7 @@ export function createSequenceBatches(
     const batches: Batch[] = [];
     const totalItems = inputTensors.length;
     
+    // The model needs at least seqLen + 1 items to create one input/target pair.
     if (totalItems <= seqLen) {
         console.warn("Not enough data to create even a single sequence.");
         return [];
@@ -42,13 +44,19 @@ export function createSequenceBatches(
     
     const sequences: {inputs: number[], targets: number[][]}[] = [];
 
-    // 1. Create all possible sequences from the text
-    for (let i = 0; i <= totalItems - seqLen; i += step) {
-        const inputSeq = inputTensors.slice(i, i + seqLen).map(t => t.data[0]);
-        // The target for a sequence is the same sequence, shifted by one.
-        // The model learns to predict the next word at each position.
-        const targetSeq = targetTensors.slice(i, i + seqLen).map(t => Array.from(t.data));
-        sequences.push({ inputs: inputSeq, targets: targetSeq });
+    // 1. Create all possible (input -> target) sequences from the text
+    // The target for a sequence is the same sequence, shifted by one word.
+    for (let i = 0; i < totalItems - seqLen; i += step) {
+        const inputSeqTensors = inputTensors.slice(i, i + seqLen);
+        // CRITICAL FIX: The target sequence is shifted by one position.
+        const targetSeqTensors = targetTensors.slice(i + 1, i + seqLen + 1);
+
+        // Ensure we have a complete pair
+        if (inputSeqTensors.length === seqLen && targetSeqTensors.length === seqLen) {
+             const inputSeq = inputSeqTensors.map(t => t.data[0]);
+             const targetSeq = targetSeqTensors.map(t => Array.from(t.data));
+             sequences.push({ inputs: inputSeq, targets: targetSeq });
+        }
     }
 
     if (sequences.length === 0) {
@@ -138,3 +146,4 @@ export function createImageBatches(inputTensors: Tensor[], targetTensors: Tensor
 
   return batches;
 }
+
