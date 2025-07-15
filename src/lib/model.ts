@@ -1,3 +1,4 @@
+
 // src/lib/model.ts
 import { Embedding, Linear, LSTMCell, Layer, crossEntropyLossWithSoftmaxGrad, PositionalEmbedding } from './layers';
 import { TransformerEncoderBlock } from './transformer';
@@ -113,7 +114,10 @@ abstract class BaseModelClass {
                     loss: avgEpochLoss,
                     gradients: gradientInfo
                 });
-                if (stop) break;
+                if (stop) {
+                    this.stopTraining = true;
+                    break;
+                };
             }
              // Give the main thread a chance to breathe
             await new Promise(resolve => setTimeout(resolve, 0));
@@ -441,3 +445,5 @@ export function deserializeModel(jsonString: string): { model: AnyModel, vocabDa
 
     return { model, vocabData };
 }
+
+  

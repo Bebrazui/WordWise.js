@@ -69,7 +69,7 @@ export default function WordwisePage() {
   const [gradientHistory, setGradientHistory] = useState<GradientData[]>([]);
   const [status, setStatus] = useState<string>('Готов к инициализации.');
   const [isTraining, setIsTraining] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(isTrained);
   const [isTrained, setIsTrained] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [sampleWords, setSampleWords] = useState<string[]>([]);
@@ -120,11 +120,12 @@ export default function WordwisePage() {
           // The UI will update once the worker confirms the model is loaded.
           if (modelJson) {
              console.log("Found model in zustand, sending to worker to load...");
+             const currentCorpus = (trainingData as TrainingDataType & { type: 'text' }).corpus;
              workerRef.current?.postMessage({
                 type: 'load-model',
                 payload: {
                     modelJson,
-                    textCorpus: trainingData.type === 'text' ? trainingData.corpus : ''
+                    textCorpus: currentCorpus
                 }
              });
           }
@@ -171,7 +172,7 @@ export default function WordwisePage() {
           setLossHistory(prev => [...prev, { epoch: payload.epoch, loss: payload.loss }]);
           setGradientHistory(payload.gradients);
           setStatus(`Обучение: Эпоха ${payload.epoch}, Потеря: ${payload.loss.toFixed(6)}`);
-          setTrainingProgress((payload.epoch / (numEpochs + (lossHistory[0]?.epoch || 0))) * 100);
+          setTrainingProgress((payload.epoch / numEpochs) * 100);
           break;
         case 'training-complete':
           setStatus('Обучение завершено. Модель готова к проверке и применению.');
@@ -203,7 +204,7 @@ export default function WordwisePage() {
     return () => {
       worker.terminate();
     };
-  }, [setModelJson, toast, modelJson, numEpochs, lossHistory, trainingData]);
+  }, [setModelJson, toast, modelJson, numEpochs]);
 
 
   const initializeModel = useCallback(() => {
@@ -632,3 +633,5 @@ export default function WordwisePage() {
     </div>
   );
 }
+
+  

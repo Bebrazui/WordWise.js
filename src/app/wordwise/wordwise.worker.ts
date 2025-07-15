@@ -230,3 +230,5 @@ async function generate(payload: {startWord: string, numWords: number, temperatu
 
 
 self.postMessage({ type: 'worker-ready' });
+
+  
