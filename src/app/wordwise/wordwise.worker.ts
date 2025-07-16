@@ -141,10 +141,13 @@ async function train(payload: { numEpochs: number, learningRate: number, batchSi
   }
   const { numEpochs, learningRate, batchSize, fullCorpus } = payload;
   lossHistory = payload.lossHistory || [];
-  const words = (fullCorpus.toLowerCase().match(/<eos>|[a-zA-Zа-яА-ЯёЁ]+/g) || []);
+  
+  // For Transformer and FlowNet, we need a fixed sequence length.
+  const seqLen = (model as any).seqLen || 1;
+
   const trainingData = {
-     inputs: wordsToInputTensors(words, vocabData.wordToIndex),
-     targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
+     inputs: wordsToInputTensors(fullCorpus, vocabData.wordToIndex, seqLen),
+     targets: wordsToTargetTensors(fullCorpus, vocabData.wordToIndex, vocabData.vocabSize, seqLen)
   };
 
   model.stopTraining = false;
@@ -203,18 +206,19 @@ async function trainStreamChunk(payload: { chunk: string }) {
 
     streamingCorpusBuffer += payload.chunk;
 
+    const seqLen = (model as any).seqLen || 1;
     const words = streamingCorpusBuffer.toLowerCase().match(/<eos>|[a-zA-Zа-яА-ЯёЁ]+/g) || [];
     
-    const seqLen = (model as any).seqLen || 1;
-    if (words.length < seqLen) return;
+    if (words.length < seqLen + 1) return;
 
     const trainingData = {
-       inputs: wordsToInputTensors(words, vocabData.wordToIndex),
-       targets: wordsToTargetTensors(words, vocabData.wordToIndex, vocabData.vocabSize)
+       inputs: wordsToInputTensors(streamingCorpusBuffer, vocabData.wordToIndex, seqLen),
+       targets: wordsToTargetTensors(streamingCorpusBuffer, vocabData.wordToIndex, vocabData.vocabSize, seqLen)
     };
     
-    const leftoverWords = words.length % seqLen;
-    streamingCorpusBuffer = words.slice(-leftoverWords).join(' ');
+    // Keep the last `seqLen` words for context in the next chunk
+    const leftoverWords = words.slice(-seqLen);
+    streamingCorpusBuffer = leftoverWords.join(' ');
 
     const callbacks: FitCallbacks = {
         onEpochEnd: async (log) => {
@@ -231,9 +235,10 @@ async function trainStreamChunk(payload: { chunk: string }) {
         }
     };
     
-    const streamOptions = { ...trainingOptions, epochs: trainingOptions.epochs + 1 };
+    const streamOptions = { ...trainingOptions, epochs: (trainingOptions.initialEpoch || 0) + 1 };
     
     await model.fit(trainingData.inputs, trainingData.targets, streamOptions, callbacks);
+    trainingOptions = streamOptions; // Update initialEpoch for next time
 }
 
 async function trainStreamEnd() {

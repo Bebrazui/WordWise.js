@@ -14,126 +14,45 @@ type Batch = {
 };
 
 /**
- * Creates batches from sequences of text input and target tensors.
- * This is a critical function for sequence models.
- * @param inputTensors Array of input tensors (word indices).
- * @param targetTensors Array of target tensors (one-hot vectors).
+ * Creates batches for sequence models.
+ * @param inputTensors Array of input tensors (sequences of word indices).
+ * @param targetTensors Array of target tensors (one-hot vectors for the word after the sequence).
  * @param batchSize The desired batch size.
- * @param seqLen The fixed sequence length for the model.
  * @returns An array of batches (plain objects for worker compatibility).
  */
 export function createSequenceBatches(
     inputTensors: Tensor[],
     targetTensors: Tensor[],
-    batchSize: number,
-    seqLen: number
+    batchSize: number
 ): Batch[] {
     const batches: Batch[] = [];
-    const totalWords = inputTensors.length;
-    
-    // The model needs at least seqLen + 1 items to create one input/target pair.
-    if (totalWords <= seqLen) {
-        console.warn("Not enough data to create even a single sequence.");
+    const totalSequences = inputTensors.length;
+
+    if (totalSequences === 0) {
         return [];
     }
     
-    const vocabSize = targetTensors[0].shape[targetTensors[0].shape.length - 1];
-    
-    // 1. Create all possible (input -> target) sequences from the text
-    const sequences: {inputs: number[], targets: number[][]}[] = [];
-    for (let i = 0; i <= totalWords - seqLen - 1; i++) {
-        const inputSeqTensors = inputTensors.slice(i, i + seqLen);
-        const targetSeqTensors = targetTensors.slice(i + 1, i + seqLen + 1);
+    for (let i = 0; i < totalSequences; i += batchSize) {
+        const batchEnd = Math.min(i + batchSize, totalSequences);
+        const actualBatchSize = batchEnd - i;
+        
+        const inputBatchTensors = inputTensors.slice(i, batchEnd);
+        const targetBatchTensors = targetTensors.slice(i, batchEnd);
 
-        const inputSeq = inputSeqTensors.map(t => t.data[0]);
-        const targetSeq = targetSeqTensors.map(t => Array.from(t.data));
-        sequences.push({ inputs: inputSeq, targets: targetSeq });
-    }
+        // Flatten the data for the batch
+        const batchInputsData = new Float32Array(actualBatchSize * inputBatchTensors[0].size);
+        const batchTargetsData = new Float32Array(actualBatchSize * targetBatchTensors[0].size);
 
-    if (sequences.length === 0) {
-        return [];
-    }
-
-    // 2. Group sequences into batches
-    for (let i = 0; i < sequences.length; i += batchSize) {
-        const batchSequences = sequences.slice(i, i + batchSize);
-        const actualBatchSize = batchSequences.length;
-
-        const batchInputs = new Float32Array(actualBatchSize * seqLen);
-        const batchTargets = new Float32Array(actualBatchSize * seqLen * vocabSize);
-
-        batchSequences.forEach((seq, batchIndex) => {
-            batchInputs.set(seq.inputs, batchIndex * seqLen);
-            // Flatten the targets for the batch
-            const flatTargets = seq.targets.flat();
-            batchTargets.set(flatTargets, batchIndex * seqLen * vocabSize);
-        });
+        for (let j = 0; j < actualBatchSize; j++) {
+            batchInputsData.set(inputBatchTensors[j].data, j * inputBatchTensors[j].size);
+            batchTargetsData.set(targetBatchTensors[j].data, j * targetBatchTensors[j].size);
+        }
         
         batches.push({
-            inputs: { data: batchInputs, shape: [actualBatchSize, seqLen] },
-            targets: { data: batchTargets, shape: [actualBatchSize, seqLen, vocabSize] },
+            inputs: { data: batchInputsData, shape: [actualBatchSize, ...inputBatchTensors[0].shape] },
+            targets: { data: batchTargetsData, shape: [actualBatchSize, ...targetBatchTensors[0].shape] },
         });
     }
 
     return batches;
-}
-
-
-/**
- * Creates batches from sequences of image and target tensors.
- * Shuffles the data before batching.
- * @param inputTensors Array of image tensors.
- * @param targetTensors Array of target tensors (one-hot).
- * @param batchSize The desired batch size.
- * @returns An array of batches (plain objects for worker compatibility).
- */
-export function createImageBatches(inputTensors: Tensor[], targetTensors: Tensor[], batchSize: number): Batch[] {
-  if (inputTensors.length !== targetTensors.length) {
-    throw new Error("Input and target tensors must have the same length.");
-  }
-  const batches: Batch[] = [];
-  const totalItems = inputTensors.length;
-
-  // Shuffle data
-  const indices = Array.from({ length: totalItems }, (_, i) => i);
-  for (let i = totalItems - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [indices[i], indices[j]] = [indices[j], indices[i]];
-  }
-
-  for (let i = 0; i < totalItems; i += batchSize) {
-    const batchIndices = indices.slice(i, i + batchSize);
-    const actualBatchSize = batchIndices.length;
-
-    if (actualBatchSize === 0) continue;
-
-    const firstInput = inputTensors[batchIndices[0]];
-    const firstTarget = targetTensors[batchIndices[0]];
-
-    if (!firstInput || !firstTarget) continue;
-
-    const [channels, height, width] = firstInput.shape;
-    const numClasses = firstTarget.shape[1];
-
-    const batchedInputData = new Float32Array(actualBatchSize * channels * height * width);
-    const batchedTargetData = new Float32Array(actualBatchSize * numClasses);
-
-    for (let j = 0; j < actualBatchSize; j++) {
-      const originalIndex = batchIndices[j];
-      const input = inputTensors[originalIndex];
-      const target = targetTensors[originalIndex];
-
-      if (input && target) {
-        batchedInputData.set(input.data, j * input.size);
-        batchedTargetData.set(target.data, j * target.size);
-      }
-    }
-
-    batches.push({
-      inputs: { data: batchedInputData, shape: [actualBatchSize, channels, height, width] },
-      targets: { data: batchedTargetData, shape: [actualBatchSize, numClasses] },
-    });
-  }
-
-  return batches;
 }

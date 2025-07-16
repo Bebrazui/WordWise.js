@@ -1,3 +1,4 @@
+
 // src/lib/layers.ts
 import { Tensor } from './tensor';
 
@@ -348,13 +349,6 @@ export class PositionalEmbedding extends Layer {
  * @returns Скалярный тензор, представляющий среднюю потерю по батчу.
  */
 export function crossEntropyLossWithSoftmaxGrad(predictions_logits: Tensor, targets_one_hot: Tensor): Tensor {
-    if (predictions_logits.shape.length > 2) {
-        // Flatten for loss calculation if needed, e.g., from [batch, seq, vocab]
-        const [batchSize, seqLen, vocabSize] = predictions_logits.shape;
-        predictions_logits = predictions_logits.reshape([batchSize * seqLen, vocabSize]);
-        targets_one_hot = targets_one_hot.reshape([batchSize * seqLen, vocabSize]);
-    }
-    
     if (!predictions_logits.shape.every((dim, i) => dim === targets_one_hot.shape[i])) {
         throw new Error("Predictions logits and targets (one-hot) must have the same shape for Cross-Entropy loss.");
     }

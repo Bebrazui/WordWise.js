@@ -39,7 +39,7 @@ export interface FitOptions {
 
 // --- Base Model Class ---
 abstract class BaseModelClass {
-    abstract type: 'text' | 'image' | 'transformer' | 'flownet';
+    abstract type: 'text' | 'transformer' | 'flownet';
     public stopTraining: boolean = false;
 
     abstract getParameters(): Tensor[];
@@ -64,8 +64,7 @@ abstract class BaseModelClass {
         const startEpoch = options.initialEpoch || 0;
         const totalEpochs = options.epochs;
 
-        const seqLen = (this as any).seqLen || 1;
-        const batches = createSequenceBatches(inputs, targets, options.batchSize, seqLen);
+        const batches = createSequenceBatches(inputs, targets, options.batchSize);
 
         if (batches.length === 0) {
             console.warn("Could not create batches. Check your data and sequence length.");
@@ -84,7 +83,14 @@ abstract class BaseModelClass {
                 const batchInputs = new Tensor(batch.inputs.data, batch.inputs.shape);
                 const batchTargets = new Tensor(batch.targets.data, batch.targets.shape);
 
-                const predictionLogits = (this as any).forward(batchInputs).outputLogits;
+                let predictionLogits = (this as any).forward(batchInputs).outputLogits;
+
+                // For sequence models, we only care about the prediction for the *last* item in the sequence
+                if (predictionLogits.shape.length === 3 && batchTargets.shape.length === 2) {
+                     const [B, S, V] = predictionLogits.shape;
+                     // Slice to get the logits for the last time step: [B, S-1, V]
+                     predictionLogits = predictionLogits.slice([0, S-1, 0], [B, 1, V]).reshape([B, V]);
+                }
                 
                 const loss = crossEntropyLossWithSoftmaxGrad(predictionLogits, batchTargets);
                 if(loss.data.length === 1) {

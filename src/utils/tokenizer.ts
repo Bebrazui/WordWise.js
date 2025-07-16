@@ -19,36 +19,47 @@ export function buildTextVocabulary(text: string): { vocab: string[]; wordToInde
 }
 
 /**
- * Преобразует массив слов в массив тензоров, содержащих индексы этих слов.
- * Используется для входных данных модели.
- * @param words Массив слов.
- * @param wordToIndex Карта слов в индексы.
- * @returns Массив тензоров, каждый из которых содержит один индекс слова: [1].
+ * Преобразует текстовый корпус в массив тензоров-последовательностей.
+ * @param text Корпус.
+ * @param wordToIndex Маппинг слов в индексы.
+ * @param seqLen Длина последовательности.
+ * @returns Массив тензоров-последовательностей.
  */
-export function wordsToInputTensors(words: string[], wordToIndex: Map<string, number>): Tensor[] {
-  return words.map(word => {
-    const index = wordToIndex.get(word.toLowerCase()) || wordToIndex.get('<unk>')!;
-    return new Tensor([index], [1]); // Тензор с одним элементом - индексом слова
-  });
+export function wordsToInputTensors(text: string, wordToIndex: Map<string, number>, seqLen: number): Tensor[] {
+  const words = text.toLowerCase().match(/<eos>|[a-zA-Zа-яА-ЯёЁ]+/g) || [];
+  const sequences: Tensor[] = [];
+  if (words.length <= seqLen) return [];
+
+  for (let i = 0; i < words.length - seqLen; i++) {
+    const sequenceWords = words.slice(i, i + seqLen);
+    const indices = sequenceWords.map(word => wordToIndex.get(word) || 0);
+    sequences.push(new Tensor(indices, [seqLen]));
+  }
+  return sequences;
 }
 
+
 /**
- * Преобразует массив слов в массив тензоров в one-hot представлении.
- * Используется для целевых (истинных) меток.
- * @param words Массив слов.
- * @param wordToIndex Карта слов в индексы.
+ * Преобразует текстовый корпус в массив one-hot тензоров для целевых слов.
+ * @param text Корпус.
+ * @param wordToIndex Маппинг слов в индексы.
  * @param vocabSize Размер словаря.
- * @returns Массив тензоров, каждый из которых является one-hot вектором: [1, vocabSize].
+ * @param seqLen Длина последовательности.
+ * @returns Массив целевых тензоров.
  */
-export function wordsToTargetTensors(words: string[], wordToIndex: Map<string, number>, vocabSize: number): Tensor[] {
-  // For sequence models, the target for word at index `i` is the word at index `i+1`.
-  // Here, we'll just one-hot encode the words themselves, and the batching function will handle the sequence logic.
-  return words.map(word => {
-    const index = wordToIndex.get(word.toLowerCase()) || wordToIndex.get('<unk>')!;
+export function wordsToTargetTensors(text: string, wordToIndex: Map<string, number>, vocabSize: number, seqLen: number): Tensor[] {
+  const words = text.toLowerCase().match(/<eos>|[a-zA-Zа-яА-ЯёЁ]+/g) || [];
+  const targets: Tensor[] = [];
+  if (words.length <= seqLen) return [];
+  
+  for (let i = 0; i < words.length - seqLen; i++) {
+    const targetWord = words[i + seqLen];
+    const targetIndex = wordToIndex.get(targetWord) || 0;
     const data = new Float32Array(vocabSize).fill(0);
-    data[index] = 1;
-    return new Tensor(data, [1, vocabSize]);
-  });
+    data[targetIndex] = 1;
+    targets.push(new Tensor(data, [vocabSize]));
+  }
+  return targets;
 }
 
 
