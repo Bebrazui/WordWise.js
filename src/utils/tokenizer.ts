@@ -18,48 +18,35 @@ export function buildTextVocabulary(text: string): { vocab: string[]; wordToInde
   return { vocab, wordToIndex, indexToWord, vocabSize: vocab.length };
 }
 
+
 /**
- * Преобразует текстовый корпус в массив тензоров-последовательностей.
- * @param text Корпус.
+ * Преобразует одну последовательность слов в тензор-последовательность.
+ * @param words Массив слов.
  * @param wordToIndex Маппинг слов в индексы.
  * @param seqLen Длина последовательности.
- * @returns Массив тензоров-последовательностей.
+ * @returns Тензор-последовательность.
  */
-export function wordsToInputTensors(text: string, wordToIndex: Map<string, number>, seqLen: number): Tensor[] {
-  const words = text.toLowerCase().match(/<eos>|[a-zA-Zа-яА-ЯёЁ]+/g) || [];
-  const sequences: Tensor[] = [];
-  if (words.length <= seqLen) return [];
-
-  for (let i = 0; i < words.length - seqLen; i++) {
-    const sequenceWords = words.slice(i, i + seqLen);
-    const indices = sequenceWords.map(word => wordToIndex.get(word) || 0);
-    sequences.push(new Tensor(indices, [seqLen]));
-  }
-  return sequences;
+export function wordsToInputTensor(words: string[], wordToIndex: Map<string, number>, seqLen: number): Tensor {
+    const indices = words.map(word => wordToIndex.get(word) || 0);
+    while (indices.length < seqLen) {
+        indices.unshift(0); // Pad with <unk>
+    }
+    return new Tensor(indices.slice(-seqLen), [seqLen]);
 }
 
 
 /**
- * Преобразует текстовый корпус в массив one-hot тензоров для целевых слов.
- * @param text Корпус.
+ * Преобразует одно целевое слово в one-hot тензор.
+ * @param word Целевое слово.
  * @param wordToIndex Маппинг слов в индексы.
  * @param vocabSize Размер словаря.
- * @param seqLen Длина последовательности.
- * @returns Массив целевых тензоров.
+ * @returns Целевой тензор.
  */
-export function wordsToTargetTensors(text: string, wordToIndex: Map<string, number>, vocabSize: number, seqLen: number): Tensor[] {
-  const words = text.toLowerCase().match(/<eos>|[a-zA-Zа-яА-ЯёЁ]+/g) || [];
-  const targets: Tensor[] = [];
-  if (words.length <= seqLen) return [];
-  
-  for (let i = 0; i < words.length - seqLen; i++) {
-    const targetWord = words[i + seqLen];
-    const targetIndex = wordToIndex.get(targetWord) || 0;
+export function wordsToTargetTensor(word: string, wordToIndex: Map<string, number>, vocabSize: number): Tensor {
+    const targetIndex = wordToIndex.get(word) || 0;
     const data = new Float32Array(vocabSize).fill(0);
     data[targetIndex] = 1;
-    targets.push(new Tensor(data, [vocabSize]));
-  }
-  return targets;
+    return new Tensor(data, [vocabSize]);
 }
 
 

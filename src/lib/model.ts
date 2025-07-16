@@ -45,97 +45,57 @@ abstract class BaseModelClass {
     abstract getParameters(): Tensor[];
     abstract getLayers(): { [key: string]: Layer | Layer[] };
     abstract getArchitecture(): any;
-
+    
     /**
-     * Compiles and trains the model.
-     * @param inputs Array of input Tensors.
-     * @param targets Array of target Tensors.
-     * @param options Training options like epochs, batchSize, learningRate.
-     * @param callbacks Callbacks for logging progress.
+     * Trains the model on a single batch of data.
+     * @param inputs A single batch of input Tensors.
+     * @param targets A single batch of target Tensors.
+     * @param learningRate The learning rate for this step.
+     * @returns An object containing the loss and average gradient magnitudes.
      */
-    async fit(
-        inputs: Tensor[],
-        targets: Tensor[],
-        options: FitOptions,
-        callbacks?: FitCallbacks
-    ): Promise<void> {
+    async fitSingleBatch(
+        inputs: Tensor,
+        targets: Tensor,
+        learningRate: number,
+    ): Promise<{ loss: number, gradients: { layer: string; avgGrad: number }[] }> {
 
-        const optimizer = new SGD(options.learningRate);
-        const startEpoch = options.initialEpoch || 0;
-        const totalEpochs = options.epochs;
+        const optimizer = new SGD(learningRate);
+        optimizer.zeroGrad(this.getParameters());
 
-        const batches = createSequenceBatches(inputs, targets, options.batchSize);
+        let predictionLogits = (this as any).forward(inputs).outputLogits;
 
-        if (batches.length === 0) {
-            console.warn("Could not create batches. Check your data and sequence length.");
-            return;
+        // For sequence models, we only care about the prediction for the *last* item in the sequence
+        if (predictionLogits.shape.length === 3 && targets.shape.length === 2) {
+             const [B, S, V] = predictionLogits.shape;
+             // Slice to get the logits for the last time step: [B, S-1, V] -> [B, 1, V]
+             predictionLogits = predictionLogits.slice([0, S-1, 0], [B, 1, V]).reshape([B, V]);
         }
+        
+        const loss = crossEntropyLossWithSoftmaxGrad(predictionLogits, targets);
+        
+        const lossValue = loss.data[0];
 
-        for (let epoch = startEpoch; epoch < totalEpochs; epoch++) {
-            if (this.stopTraining) break;
-            let epochLoss = 0;
+        loss.backward();
+        optimizer.step(this.getParameters());
 
-            for (const batch of batches) {
-                if (this.stopTraining) break;
-                
-                optimizer.zeroGrad(this.getParameters());
+        const gradientInfo = Object.entries(this.getLayers()).flatMap(([layerName, layerOrLayers]) => {
+            const layers = Array.isArray(layerOrLayers) ? layerOrLayers : [layerOrLayers];
+            return layers.map((layer, index) => {
+                 let totalGradMag = 0;
+                 let paramCount = 0;
+                 layer.getParameters().forEach(p => {
+                    if (p.grad) {
+                       totalGradMag += p.grad.data.reduce((acc, val) => acc + Math.abs(val), 0);
+                       paramCount += p.grad.size;
+                    }
+                 });
+                 const avgGrad = paramCount > 0 ? totalGradMag / paramCount : 0;
+                 const finalLayerName = layers.length > 1 ? `${layerName}_${index}` : layerName;
+                 return { layer: finalLayerName, avgGrad };
+            });
+        });
 
-                const batchInputs = new Tensor(batch.inputs.data, batch.inputs.shape);
-                const batchTargets = new Tensor(batch.targets.data, batch.targets.shape);
-
-                let predictionLogits = (this as any).forward(batchInputs).outputLogits;
-
-                // For sequence models, we only care about the prediction for the *last* item in the sequence
-                if (predictionLogits.shape.length === 3 && batchTargets.shape.length === 2) {
-                     const [B, S, V] = predictionLogits.shape;
-                     // Slice to get the logits for the last time step: [B, S-1, V]
-                     predictionLogits = predictionLogits.slice([0, S-1, 0], [B, 1, V]).reshape([B, V]);
-                }
-                
-                const loss = crossEntropyLossWithSoftmaxGrad(predictionLogits, batchTargets);
-                if(loss.data.length === 1) {
-                    epochLoss += loss.data[0];
-                }
-
-                loss.backward();
-                optimizer.step(this.getParameters());
-            }
-            
-            if (this.stopTraining) break;
-
-            const avgEpochLoss = epochLoss / batches.length;
-            const currentEpoch = epoch + 1;
-
-            if (callbacks?.onEpochEnd) {
-                const gradientInfo = Object.entries(this.getLayers()).flatMap(([layerName, layerOrLayers]) => {
-                    const layers = Array.isArray(layerOrLayers) ? layerOrLayers : [layerOrLayers];
-                    return layers.map((layer, index) => {
-                         let totalGradMag = 0;
-                         let paramCount = 0;
-                         layer.getParameters().forEach(p => {
-                            if (p.grad) {
-                               totalGradMag += p.grad.data.reduce((acc, val) => acc + Math.abs(val), 0);
-                               paramCount += p.grad.size;
-                            }
-                         });
-                         const avgGrad = paramCount > 0 ? totalGradMag / paramCount : 0;
-                         const finalLayerName = layers.length > 1 ? `${layerName}_${index}` : layerName;
-                         return { layer: finalLayerName, avgGrad };
-                    });
-                });
-
-                const stop = await callbacks.onEpochEnd({
-                    epoch: currentEpoch,
-                    loss: avgEpochLoss,
-                    gradients: gradientInfo
-                });
-                if (stop) {
-                    this.stopTraining = true;
-                    break;
-                };
-            }
-            await new Promise(resolve => setTimeout(resolve, 0));
-        }
+        return { loss: lossValue, gradients: gradientInfo };
     }
 }
 

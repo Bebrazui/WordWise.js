@@ -122,8 +122,8 @@ export default function WordwisePage() {
 
   // Hyperparameters
   const [learningRate, setLearningRate] = useState(0.01);
-  const [numEpochs, setNumEpochs] = useState(500);
-  const [batchSize, setBatchSize] = useState(4);
+  const [numEpochs, setNumEpochs] = useState(5);
+  const [batchSize, setBatchSize] = useState(32);
   const [streamTraining, setStreamTraining] = useState(true);
   
   // LSTM params
@@ -146,6 +146,11 @@ export default function WordwisePage() {
   const { toast } = useToast();
   
   const workerRef = useRef<Worker | null>(null);
+  const trainingStatusRef = useRef({ isTraining: false });
+
+  useEffect(() => {
+    trainingStatusRef.current.isTraining = isTraining;
+  }, [isTraining]);
 
   // Setup Web Worker
   useEffect(() => {
@@ -213,10 +218,13 @@ export default function WordwisePage() {
           toast({ title: "Успех", description: "Модель загружена и готова." });
           break;
         case 'progress':
-          setLossHistory(prev => [...prev, { epoch: payload.epoch, loss: payload.loss }]);
+          setLossHistory(prev => [...prev, { epoch: payload.batch, loss: payload.loss }]);
           setGradientHistory(payload.gradients);
-          setStatus(`Обучение: Эпоха ${payload.epoch}, Потеря: ${payload.loss.toFixed(6)}`);
-          setTrainingProgress((payload.epoch / numEpochs) * 100);
+          setStatus(`Обучение: Эпоха ${payload.epoch}, Батч: ${payload.batch}, Потеря: ${payload.loss.toFixed(6)}`);
+          setTrainingProgress((payload.epoch / numEpochs) * 100 + (payload.batch / payload.totalBatches / numEpochs) * 100);
+          break;
+        case 'epoch-complete':
+          setStatus(`Эпоха ${payload.epoch} завершена.`);
           break;
         case 'training-complete':
           setStatus('Обучение завершено. Модель готова к проверке и применению.');
@@ -290,43 +298,34 @@ export default function WordwisePage() {
   }, [trainingData, modelArch, embeddingDim, hiddenSize, dModel, numHeads, dff, numLayers, seqLen, flowEmbeddingDim, flowNumLayers, toast]);
   
   const stopTraining = () => {
-    workerRef.current?.postMessage({ type: 'stop' });
+    if (workerRef.current) {
+      workerRef.current.postMessage({ type: 'stop' });
+      setIsTraining(false); // Immediately update UI state
+    }
   };
 
   const trainModel = async () => {
     if (!isInitialized || isTraining) return;
     setIsTraining(true);
     setStatus('Начинается обучение...');
+    setLossHistory([]); // Clear previous loss history
     
     const commonPayload = { 
-        numEpochs,
         learningRate,
         batchSize,
     };
 
-    if (streamTraining && modelArch === 'flownet' && trainingData.type === 'text') {
-        setStatus('Начинается потоковое обучение...');
-        workerRef.current?.postMessage({ type: 'train-stream-start', payload: {...commonPayload, lossHistory} });
+    const corpus = trainingData.type === 'text' ? trainingData.corpus : '';
 
-        const corpus = trainingData.corpus;
-        const chunkSize = 2048;
-        for (let i = 0; i < corpus.length; i += chunkSize) {
-            const chunk = corpus.substring(i, i + chunkSize);
-            workerRef.current?.postMessage({ type: 'train-stream-chunk', payload: { chunk } });
-            await new Promise(res => setTimeout(res, 5));
-        }
-        workerRef.current?.postMessage({ type: 'train-stream-end' });
-
-    } else {
-        workerRef.current?.postMessage({
-          type: 'train',
-          payload: { 
+    workerRef.current?.postMessage({
+        type: 'start-training-loop',
+        payload: {
             ...commonPayload,
-            lossHistory,
-            fullCorpus: trainingData.type === 'text' ? trainingData.corpus : ''
-          }
-        });
-    }
+            corpus,
+            numEpochs
+        }
+    });
+
   };
 
   const applyToChat = () => {
@@ -356,7 +355,7 @@ export default function WordwisePage() {
         payload: {
             startWord,
             temperature,
-            numWords: 15
+            numWords: 20
         }
     });
   };
@@ -558,7 +557,7 @@ export default function WordwisePage() {
                          </div>
                          <div className="mt-4">
                             <Label htmlFor="epochs">Эпохи обучения</Label>
-                            <Input id="epochs" type="number" value={numEpochs} onChange={e => setNumEpochs(parseInt(e.target.value, 10))} min="1" max="100000" disabled={isTraining}/>
+                            <Input id="epochs" type="number" value={numEpochs} onChange={e => setNumEpochs(parseInt(e.target.value, 10))} min="1" max="100" disabled={isTraining}/>
                          </div>
                          {(modelArch === 'transformer' || modelArch === 'flownet') && (
                             <div className="mt-4">
@@ -568,10 +567,10 @@ export default function WordwisePage() {
                           )}
                           {modelArch === 'flownet' && (
                             <div className="flex items-center space-x-2 mt-4">
-                                <Switch id="stream-training" checked={streamTraining} onCheckedChange={setStreamTraining} disabled={isTraining || isInitialized} />
+                                <Switch id="stream-training" checked={streamTraining} onCheckedChange={setStreamTraining} disabled={true} />
                                 <Label htmlFor="stream-training" className="flex items-center gap-2">
                                   <Zap className="h-4 w-4 text-orange-500" />
-                                  Потоковое обучение (для больших данных)
+                                  Потоковое обучение (по умолчанию)
                                 </Label>
                             </div>
                           )}
@@ -681,11 +680,12 @@ export default function WordwisePage() {
                         {lossHistory.length > 0 ? (
                             <LineChart data={lossHistory} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="epoch" type="number" domain={['dataMin', 'dataMax']} label={{ value: 'Эпоха', position: 'insideBottom', offset: -5 }}/>
-                                <YAxis allowDecimals={false} domain={['dataMin', 'auto']} label={{ value: 'Потеря', angle: -90, position: 'insideLeft' }}/>
+                                <XAxis dataKey="epoch" type="number" domain={['dataMin', 'dataMax']} label={{ value: 'Батч', position: 'insideBottom', offset: -5 }} allowDecimals={false}/>
+                                <YAxis allowDecimals={false} domain={[0, 'auto']} label={{ value: 'Потеря', angle: -90, position: 'insideLeft' }}/>
                                 <Tooltip
                                     contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.8)', borderRadius: '0.5rem' }}
-                                    formatter={(value: number) => [value.toFixed(6), "Потеря"]}
+                                    formatter={(value: number) => [value.toFixed(4), "Потеря"]}
+                                    labelFormatter={(label) => `Батч: ${label}`}
                                 />
                                 <Legend verticalAlign="top" height={36} />
                                 <Line type="monotone" dataKey="loss" name="Потеря при обучении" stroke="#8884d8" strokeWidth={2} dot={false} />
